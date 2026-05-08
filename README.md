@@ -36,6 +36,27 @@ Inside `data/`:
 - `wagons.csv`
 - `wagon_allocations.csv`
 
+## Database Mode
+
+The app now supports SQL database storage through `DATABASE_URL`.
+
+- If `DATABASE_URL` is set, the app uses SQL tables (`invoices`, `invoice_items`, `wagons`, `wagon_allocations`).
+- If `DATABASE_URL` is not set, it falls back to CSV files in `data/`.
+
+Example local SQLite:
+
+```bash
+set DATABASE_URL=sqlite:///./sklad.db
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Example PostgreSQL:
+
+```bash
+set DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
 ## Vercel Deploy (GitHub)
 
 1. Push this project to GitHub.
@@ -49,6 +70,5 @@ Inside `data/`:
 ### Vercel notes
 
 - FastAPI entrypoint is `app/app.py`.
-- Vercel Functions filesystem is read-only except `/tmp`; app writes CSV/PDF to `/tmp/sklad`.
-- `/tmp` is ephemeral, so data is not persistent between cold starts/redeploys.
-
+- Recommended for production: set `DATABASE_URL` in Vercel Project Settings (Environment Variables).
+- Vercel Functions filesystem is read-only except `/tmp`; only PDF files are written there temporarily.

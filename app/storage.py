@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import csv
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+from sqlalchemy import Column, MetaData, String, Table, create_engine, delete, insert, select
 
 
 def now_iso() -> str:
@@ -65,11 +68,9 @@ TABLE_SCHEMAS: dict[str, list[str]] = {
 }
 
 
-@dataclass
-class CsvStore:
-    base_dir: Path
-
-    def __post_init__(self) -> None:
+class _CsvBackend:
+    def __init__(self, base_dir: Path) -> None:
+        self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
         for table_name, headers in TABLE_SCHEMAS.items():
             self._ensure_table(table_name, headers)
@@ -95,18 +96,14 @@ class CsvStore:
         if existing_headers == headers:
             return
 
-        migrated_rows = []
-        for row in rows:
-            migrated_rows.append({header: row.get(header, "") for header in headers})
-
+        migrated_rows = [{header: row.get(header, "") for header in headers} for row in rows]
         with table_path.open("w", newline="", encoding="utf-8") as file_obj:
             writer = csv.DictWriter(file_obj, fieldnames=headers)
             writer.writeheader()
             writer.writerows(migrated_rows)
 
     def list_rows(self, table_name: str) -> list[dict[str, str]]:
-        table_path = self._table_path(table_name)
-        with table_path.open("r", newline="", encoding="utf-8") as file_obj:
+        with self._table_path(table_name).open("r", newline="", encoding="utf-8") as file_obj:
             reader = csv.DictReader(file_obj)
             return list(reader)
 
@@ -120,9 +117,7 @@ class CsvStore:
             row_with_timestamps["updated_at"] = now
 
         normalized = {header: str(row_with_timestamps.get(header, "")) for header in headers}
-
-        table_path = self._table_path(table_name)
-        with table_path.open("a", newline="", encoding="utf-8") as file_obj:
+        with self._table_path(table_name).open("a", newline="", encoding="utf-8") as file_obj:
             writer = csv.DictWriter(file_obj, fieldnames=headers)
             writer.writerow(normalized)
         return normalized
@@ -142,10 +137,8 @@ class CsvStore:
                 updated["updated_at"] = now_iso()
                 rows[idx] = {header: str(updated.get(header, row.get(header, ""))) for header in headers}
                 changed += 1
-
         if changed:
-            table_path = self._table_path(table_name)
-            with table_path.open("w", newline="", encoding="utf-8") as file_obj:
+            with self._table_path(table_name).open("w", newline="", encoding="utf-8") as file_obj:
                 writer = csv.DictWriter(file_obj, fieldnames=headers)
                 writer.writeheader()
                 writer.writerows(rows)
@@ -154,8 +147,102 @@ class CsvStore:
     def replace_rows(self, table_name: str, rows: list[dict[str, str]]) -> None:
         headers = TABLE_SCHEMAS[table_name]
         normalized_rows = [{header: str(row.get(header, "")) for header in headers} for row in rows]
-        table_path = self._table_path(table_name)
-        with table_path.open("w", newline="", encoding="utf-8") as file_obj:
+        with self._table_path(table_name).open("w", newline="", encoding="utf-8") as file_obj:
             writer = csv.DictWriter(file_obj, fieldnames=headers)
             writer.writeheader()
             writer.writerows(normalized_rows)
+
+
+class _SqlBackend:
+    def __init__(self, database_url: str) -> None:
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        self.engine = create_engine(database_url, future=True, pool_pre_ping=True)
+        self.metadata = MetaData()
+        self.tables: dict[str, Table] = {}
+        for table_name, headers in TABLE_SCHEMAS.items():
+            columns = [Column(header, String, nullable=False, default="") for header in headers]
+            self.tables[table_name] = Table(table_name, self.metadata, *columns)
+        self.metadata.create_all(self.engine)
+
+    def list_rows(self, table_name: str) -> list[dict[str, str]]:
+        table = self.tables[table_name]
+        with self.engine.begin() as conn:
+            result = conn.execute(select(table))
+            rows = []
+            for row in result:
+                mapping = row._mapping
+                rows.append({key: str(mapping.get(key) or "") for key in TABLE_SCHEMAS[table_name]})
+            return rows
+
+    def append_row(self, table_name: str, row: dict[str, str]) -> dict[str, str]:
+        headers = TABLE_SCHEMAS[table_name]
+        now = now_iso()
+        row_with_timestamps = {**row}
+        if "created_at" in headers and not row_with_timestamps.get("created_at"):
+            row_with_timestamps["created_at"] = now
+        if "updated_at" in headers:
+            row_with_timestamps["updated_at"] = now
+        normalized = {header: str(row_with_timestamps.get(header, "")) for header in headers}
+        with self.engine.begin() as conn:
+            conn.execute(insert(self.tables[table_name]).values(**normalized))
+        return normalized
+
+    def update_rows(
+        self,
+        table_name: str,
+        predicate: Callable[[dict[str, str]], bool],
+        updater: Callable[[dict[str, str]], dict[str, str]],
+    ) -> int:
+        headers = TABLE_SCHEMAS[table_name]
+        rows = self.list_rows(table_name)
+        changed = 0
+        for idx, row in enumerate(rows):
+            if predicate(row):
+                updated = updater(dict(row))
+                updated["updated_at"] = now_iso()
+                rows[idx] = {header: str(updated.get(header, row.get(header, ""))) for header in headers}
+                changed += 1
+        if changed:
+            self.replace_rows(table_name, rows)
+        return changed
+
+    def replace_rows(self, table_name: str, rows: list[dict[str, str]]) -> None:
+        headers = TABLE_SCHEMAS[table_name]
+        normalized_rows = [{header: str(row.get(header, "")) for header in headers} for row in rows]
+        with self.engine.begin() as conn:
+            conn.execute(delete(self.tables[table_name]))
+            if normalized_rows:
+                conn.execute(insert(self.tables[table_name]), normalized_rows)
+
+
+@dataclass
+class CsvStore:
+    base_dir: Path
+
+    def __post_init__(self) -> None:
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if database_url:
+            self._backend = _SqlBackend(database_url)
+            self.backend_type = "sql"
+        else:
+            self._backend = _CsvBackend(self.base_dir)
+            self.backend_type = "csv"
+
+    def list_rows(self, table_name: str) -> list[dict[str, str]]:
+        return self._backend.list_rows(table_name)
+
+    def append_row(self, table_name: str, row: dict[str, str]) -> dict[str, str]:
+        return self._backend.append_row(table_name, row)
+
+    def update_rows(
+        self,
+        table_name: str,
+        predicate: Callable[[dict[str, str]], bool],
+        updater: Callable[[dict[str, str]], dict[str, str]],
+    ) -> int:
+        return self._backend.update_rows(table_name, predicate, updater)
+
+    def replace_rows(self, table_name: str, rows: list[dict[str, str]]) -> None:
+        self._backend.replace_rows(table_name, rows)
+
