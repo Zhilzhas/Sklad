@@ -83,31 +83,37 @@ function toggleMeasureRequirements(row) {
   }
 }
 
-function renderItemRow(index) {
+function CargoPositionCard(index) {
   const row = document.createElement("div");
   row.className = "item-row";
   row.innerHTML = `
     <div class="item-row-top">
       <strong>Позиция ${index}</strong>
-      <button type="button" class="remove-item">Удалить</button>
+      <button type="button" class="btn btn-ghost remove-item">Удалить</button>
     </div>
     <div class="item-grid">
-      <label>Наименование
+      <label class="form-field">
+        <span class="field-label">Наименование</span>
         <input data-field="name" required>
       </label>
-      <label>Ед. измерения
+      <label class="form-field">
+        <span class="field-label">Ед. измерения</span>
         <input data-field="unit" placeholder="мешок, коробка..." required>
       </label>
-      <label>Количество (шт.)
+      <label class="form-field">
+        <span class="field-label">Количество (шт.)</span>
         <input type="number" min="1" step="1" data-field="quantity" required>
       </label>
-      <label>Вес (кг)
+      <label class="form-field">
+        <span class="field-label">Вес (кг)</span>
         <input type="number" min="0" step="0.01" data-field="weight_kg" required>
       </label>
-      <label>Объем (м³)
+      <label class="form-field">
+        <span class="field-label">Объем (м³)</span>
         <input type="number" min="0" step="0.01" data-field="volume_m3">
       </label>
-      <label>Мера
+      <label class="form-field">
+        <span class="field-label">Мера</span>
         <select data-field="measure" required>
           <option value="weight">Вес</option>
           <option value="volume">Объем</option>
@@ -115,6 +121,7 @@ function renderItemRow(index) {
       </label>
     </div>
   `;
+
   row.querySelector(".remove-item").addEventListener("click", () => {
     row.remove();
     reindexItemRows();
@@ -132,7 +139,7 @@ function reindexItemRows() {
 
 function addItemRow() {
   const wrap = document.getElementById("items-wrap");
-  wrap.appendChild(renderItemRow(wrap.querySelectorAll(".item-row").length + 1));
+  wrap.appendChild(CargoPositionCard(wrap.querySelectorAll(".item-row").length + 1));
 }
 
 function gatherInvoicePayload() {
@@ -162,7 +169,7 @@ function gatherInvoicePayload() {
 }
 
 function selectTab(tabName) {
-  document.querySelectorAll(".tab").forEach((tab) => {
+  document.querySelectorAll(".top-tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabName);
   });
   document.querySelectorAll(".tab-panel").forEach((panel) => {
@@ -170,49 +177,61 @@ function selectTab(tabName) {
   });
 }
 
+function ShipmentCard(invoice) {
+  const card = document.createElement("div");
+  card.className = "invoice-card";
+  const tariffBadge = invoice.has_tariff
+    ? `<span class="badge badge-accent">Тариф назначен</span>`
+    : `<span class="badge badge-muted">Тариф не назначен</span>`;
+  const pdfBadge = invoice.has_pdf
+    ? `<span class="badge badge-accent">PDF готов</span>`
+    : `<span class="badge badge-muted">PDF не готов</span>`;
+  const wagonBadge = invoice.estimated_release_date
+    ? `<span class="badge badge-accent">Выдача: ${invoice.estimated_release_date}</span>`
+    : `<span class="badge badge-muted">Вагон не назначен</span>`;
+
+  card.innerHTML = `
+    <h3 class="invoice-title">Накладная № ${invoice.invoice_number}</h3>
+    <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
+    <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
+    <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
+    <p class="invoice-meta"><span class="meta-strong">Строк:</span> ${invoice.items_count} | <span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
+    <div class="badge-row">${tariffBadge}${pdfBadge}${wagonBadge}</div>
+    <div class="row-actions">
+      <button type="button" class="btn btn-secondary" data-action="tariff">Тариф</button>
+      <button type="button" class="btn btn-secondary" data-action="wagon">Вагон</button>
+      <button type="button" class="btn btn-primary" data-action="pdf">PDF</button>
+    </div>
+  `;
+
+  card.querySelector("[data-action='tariff']").addEventListener("click", () => {
+    document.getElementById("tariff-invoice-select").value = invoice.invoice_id;
+    document.getElementById("price-per-kg").focus();
+    selectTab("create");
+  });
+  card.querySelector("[data-action='wagon']").addEventListener("click", async () => {
+    document.getElementById("assignment-invoice").value = invoice.invoice_id;
+    await loadAssignmentItems();
+    selectTab("wagons");
+  });
+  card.querySelector("[data-action='pdf']").addEventListener("click", () => {
+    if (!invoice.has_tariff) {
+      showToast("PDF доступен только после назначения тарифа");
+      return;
+    }
+    window.open(`/api/invoices/${invoice.invoice_id}/pdf`, "_blank");
+  });
+  return card;
+}
+
 function renderInvoices() {
   const container = document.getElementById("invoices-list");
   container.innerHTML = "";
   if (!state.invoices.length) {
-    container.innerHTML = "<p>Накладных пока нет.</p>";
+    container.innerHTML = "<p class='status-text'>Накладных пока нет.</p>";
     return;
   }
-  state.invoices.forEach((invoice) => {
-    const card = document.createElement("div");
-    card.className = "invoice-card";
-    card.innerHTML = `
-      <h3>№ ${invoice.invoice_number}</h3>
-      <p>Создана: ${invoice.creation_date || "-"} | Накладная: ${invoice.issued_date}</p>
-      <p>План выдачи: ${invoice.estimated_release_date || "-"}</p>
-      <p>Отправитель: ${invoice.shipper_name}</p>
-      <p>Получатель: ${invoice.consignee_name}</p>
-      <p>Строк: ${invoice.items_count} | Итог: ${moneyTenge(invoice.total_amount)}</p>
-      <p>Тариф: ${invoice.has_tariff ? "назначен" : "не назначен"} | PDF: ${invoice.has_pdf ? "готов" : "нет"}</p>
-      <div class="row-actions">
-        <button type="button" data-action="tariff">Тариф</button>
-        <button type="button" data-action="wagon">Вагон</button>
-        <button type="button" data-action="pdf">PDF</button>
-      </div>
-    `;
-    card.querySelector("[data-action='tariff']").addEventListener("click", () => {
-      document.getElementById("tariff-invoice-select").value = invoice.invoice_id;
-      document.getElementById("price-per-kg").focus();
-      selectTab("create");
-    });
-    card.querySelector("[data-action='wagon']").addEventListener("click", async () => {
-      document.getElementById("assignment-invoice").value = invoice.invoice_id;
-      await loadAssignmentItems();
-      selectTab("wagons");
-    });
-    card.querySelector("[data-action='pdf']").addEventListener("click", () => {
-      if (!invoice.has_tariff) {
-        showToast("PDF доступен только после назначения тарифа");
-        return;
-      }
-      window.open(`/api/invoices/${invoice.invoice_id}/pdf`, "_blank");
-    });
-    container.appendChild(card);
-  });
+  state.invoices.forEach((invoice) => container.appendChild(ShipmentCard(invoice)));
 }
 
 function fillInvoiceSelects() {
@@ -271,21 +290,21 @@ function renderArchive() {
   body.innerHTML = "";
   const filtered = applyArchiveFilters(state.invoices);
   if (!filtered.length) {
-    body.innerHTML = "<tr><td colspan='9'>Нет данных по фильтрам</td></tr>";
+    body.innerHTML = "<tr><td colspan='9'>Нет данных по выбранным фильтрам</td></tr>";
     return;
   }
   filtered.forEach((row) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${row.invoice_number}</td>
-      <td>${row.creation_date || "-"}</td>
-      <td>${row.issued_date || "-"}</td>
-      <td>${row.estimated_release_date || "-"}</td>
-      <td>${row.shipper_name}</td>
-      <td>${row.consignee_name}</td>
-      <td>${row.items_count}</td>
-      <td>${moneyTenge(row.total_amount)}</td>
-      <td>${row.has_tariff ? "Да" : "Нет"}</td>
+      <td data-label="№ накладной">${row.invoice_number}</td>
+      <td data-label="Создана">${row.creation_date || "-"}</td>
+      <td data-label="Дата накладной">${row.issued_date || "-"}</td>
+      <td data-label="Выдача (план)">${row.estimated_release_date || "-"}</td>
+      <td data-label="Отправитель">${row.shipper_name}</td>
+      <td data-label="Получатель">${row.consignee_name}</td>
+      <td data-label="Строк">${row.items_count}</td>
+      <td data-label="Итог">${moneyTenge(row.total_amount)}</td>
+      <td data-label="Тариф">${row.has_tariff ? "Да" : "Нет"}</td>
     `;
     body.appendChild(tr);
   });
@@ -309,7 +328,7 @@ function renderPartialItems() {
   const wrap = document.getElementById("partial-items");
   wrap.innerHTML = "";
   if (!state.assignmentItems.length) {
-    wrap.innerHTML = "<p>Выберите накладную с позициями.</p>";
+    wrap.innerHTML = "<p class='status-text'>Выберите накладную с позициями.</p>";
     return;
   }
   state.assignmentItems.forEach((item) => {
@@ -362,7 +381,7 @@ function collectPartialMovedItems() {
 }
 
 function initTabs() {
-  document.querySelectorAll(".tab").forEach((button) => {
+  document.querySelectorAll(".top-tab").forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
 }
@@ -383,7 +402,9 @@ function initInvoiceForm() {
       await api("/api/invoices", { method: "POST", body: JSON.stringify(payload) });
       showToast("Накладная создана");
       event.target.reset();
-      document.querySelectorAll(".kz-phone").forEach((input) => { input.value = "+7"; });
+      document.querySelectorAll(".kz-phone").forEach((input) => {
+        input.value = "+7";
+      });
       document.getElementById("items-wrap").innerHTML = "";
       addItemRow();
       setDefaultDates();
@@ -488,14 +509,7 @@ function initWagonForms() {
 }
 
 function initArchiveFilters() {
-  [
-    "f-invoice-number",
-    "f-shipper",
-    "f-consignee",
-    "f-created-from",
-    "f-created-to",
-    "f-has-tariff",
-  ].forEach((id) => {
+  ["f-invoice-number", "f-shipper", "f-consignee", "f-created-from", "f-created-to", "f-has-tariff"].forEach((id) => {
     document.getElementById(id).addEventListener("input", renderArchive);
     document.getElementById(id).addEventListener("change", renderArchive);
   });

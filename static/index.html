@@ -8,165 +8,221 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-  <div class="app">
-    <header class="header">
-      <h1>Склад Логистика</h1>
-      <p>Накладные, тарифы (₸), вагоны и архив</p>
+  <div class="app-shell">
+    <header class="app-header card">
+      <h1 class="app-title">Склад Логистика</h1>
+      <p class="app-subtitle">Накладные, тарифы (₸), вагоны и архив</p>
     </header>
 
-    <nav class="tabs">
-      <button class="tab active" data-tab="create">Новая накладная</button>
-      <button class="tab" data-tab="invoices">Накладные</button>
-      <button class="tab" data-tab="wagons">Вагоны</button>
-      <button class="tab" data-tab="archive">Архив</button>
+    <nav class="top-tabs" aria-label="Основные разделы">
+      <button class="top-tab active" data-tab="create">Новая накладная</button>
+      <button class="top-tab" data-tab="invoices">Накладные</button>
+      <button class="top-tab" data-tab="wagons">Вагоны</button>
+      <button class="top-tab" data-tab="archive">Архив</button>
     </nav>
 
-    <main>
+    <main class="page-content">
       <section id="tab-create" class="tab-panel active">
-        <form id="invoice-form">
-          <div class="grid compact-grid">
-            <label>Номер накладной/заявки
-              <input name="invoice_number" required>
-            </label>
-            <label>Дата создания накладной
-              <input type="date" name="creation_date" required>
-            </label>
-            <label>Дата накладной
-              <input type="date" name="issued_date" required>
-            </label>
-            <label>Грузоотправитель
-              <input name="shipper_name" required>
-            </label>
-            <label>Телефон отправителя
-              <input class="kz-phone" name="shipper_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
-            </label>
-            <label>Грузополучатель
-              <input name="consignee_name" required>
-            </label>
-            <label>Телефон получателя
-              <input class="kz-phone" name="consignee_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
-            </label>
-          </div>
+        <form id="invoice-form" class="stack-lg">
+          <article class="section-card card">
+            <h2 class="section-title">Основная информация</h2>
+            <div class="form-grid">
+              <label class="form-field">
+                <span class="field-label">Номер накладной/заявки</span>
+                <input name="invoice_number" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Дата создания накладной</span>
+                <input type="date" name="creation_date" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Дата накладной</span>
+                <input type="date" name="issued_date" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Грузоотправитель</span>
+                <input name="shipper_name" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Телефон отправителя</span>
+                <input class="kz-phone" name="shipper_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Грузополучатель</span>
+                <input name="consignee_name" required>
+              </label>
+              <label class="form-field">
+                <span class="field-label">Телефон получателя</span>
+                <input class="kz-phone" name="consignee_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
+              </label>
+            </div>
+          </article>
 
-          <div class="items-header">
-            <h2>Позиции груза</h2>
-            <button type="button" id="add-item-btn">+ Строка</button>
+          <article class="section-card card">
+            <div class="card-head">
+              <h2 class="section-title">Позиции груза</h2>
+              <button type="button" id="add-item-btn" class="btn btn-secondary">+ Добавить строку</button>
+            </div>
+            <div id="items-wrap" class="stack-md"></div>
+          </article>
+
+          <div class="action-row">
+            <button type="submit" class="btn btn-primary btn-wide">Создать накладную</button>
           </div>
-          <div id="items-wrap"></div>
-          <button type="submit" class="primary">Создать накладную</button>
         </form>
 
-        <form id="tariff-form" class="compact-form">
-          <h2>Тарифы</h2>
-          <label>Выберите накладную
-            <select id="tariff-invoice-select" required></select>
-          </label>
-          <label>Цена за 1 кг (₸)
-            <input type="number" step="0.01" min="0" id="price-per-kg" required>
-          </label>
-          <label>Цена за 1 м³ (₸)
-            <input type="number" step="0.01" min="0" id="price-per-m3" required>
-          </label>
-          <button type="submit" class="primary">Применить тариф</button>
-          <div id="tariff-result" class="result"></div>
+        <form id="tariff-form" class="section-card card stack-md">
+          <h2 class="section-title">Тарифы</h2>
+          <p class="section-hint">Назначайте тариф только выбранной накладной</p>
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="field-label">Выберите накладную</span>
+              <select id="tariff-invoice-select" required></select>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Цена за 1 кг (₸)</span>
+              <input type="number" step="0.01" min="0" id="price-per-kg" required>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Цена за 1 м³ (₸)</span>
+              <input type="number" step="0.01" min="0" id="price-per-m3" required>
+            </label>
+          </div>
+          <div class="action-row">
+            <button type="submit" class="btn btn-primary">Применить тариф</button>
+          </div>
+          <div id="tariff-result" class="status-text"></div>
         </form>
       </section>
 
       <section id="tab-invoices" class="tab-panel">
-        <div class="section-actions">
-          <button type="button" id="refresh-invoices">Обновить список</button>
-        </div>
-        <div id="invoices-list"></div>
+        <article class="section-card card stack-md">
+          <div class="card-head">
+            <h2 class="section-title">Список накладных</h2>
+            <button type="button" id="refresh-invoices" class="btn btn-secondary">Обновить список</button>
+          </div>
+          <div id="invoices-list" class="stack-md"></div>
+        </article>
       </section>
 
-      <section id="tab-wagons" class="tab-panel">
-        <form id="wagon-form" class="compact-form">
-          <h2>Создать/обновить вагон</h2>
-          <label>Номер вагона
-            <input id="wagon-code" required>
-          </label>
-          <label>Назначение (направление)
-            <input id="wagon-destination" placeholder="например, Алматы">
-          </label>
-          <label>Комментарий
-            <input id="wagon-description">
-          </label>
-          <button type="submit">Сохранить вагон</button>
+      <section id="tab-wagons" class="tab-panel stack-lg">
+        <form id="wagon-form" class="section-card card stack-md">
+          <h2 class="section-title">Создать/обновить вагон</h2>
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="field-label">Номер вагона</span>
+              <input id="wagon-code" required>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Назначение (направление)</span>
+              <input id="wagon-destination" placeholder="Например, Алматы">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Комментарий</span>
+              <input id="wagon-description">
+            </label>
+          </div>
+          <div class="action-row">
+            <button type="submit" class="btn btn-primary">Сохранить вагон</button>
+          </div>
         </form>
 
-        <form id="assignment-form" class="compact-form">
-          <h2>Распределение всей накладной в вагон</h2>
-          <label>Накладная
-            <select id="assignment-invoice" required></select>
-          </label>
-          <label>Вагон
-            <select id="assignment-wagon" required></select>
-          </label>
-          <label>Дата приблизительно выдачи груза
-            <input type="date" id="estimated-release-date" required>
-          </label>
-          <label>Груз полностью поместился в вагон?
-            <select id="fully-loaded" required>
-              <option value="yes">Да</option>
-              <option value="no">Нет</option>
-            </select>
-          </label>
-
-          <div id="partial-box" class="partial-box hidden">
-            <p>Отметьте позиции и укажите, какое количество (шт.) ушло в этот вагон.</p>
-            <div id="partial-items"></div>
+        <form id="assignment-form" class="section-card card stack-md">
+          <h2 class="section-title">Распределение накладной в вагон</h2>
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="field-label">Накладная</span>
+              <select id="assignment-invoice" required></select>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Вагон</span>
+              <select id="assignment-wagon" required></select>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Дата приблизительно выдачи груза</span>
+              <input type="date" id="estimated-release-date" required>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Груз полностью поместился в вагон?</span>
+              <select id="fully-loaded" required>
+                <option value="yes">Да</option>
+                <option value="no">Нет</option>
+              </select>
+            </label>
           </div>
 
-          <button type="submit" class="primary">Сохранить распределение</button>
+          <div id="partial-box" class="sub-card hidden">
+            <h3 class="sub-card-title">Какие позиции ушли в этот вагон</h3>
+            <p class="section-hint">Отметьте позиции и укажите количество, которое распределено.</p>
+            <div id="partial-items" class="stack-sm"></div>
+          </div>
+
+          <div class="action-row">
+            <button type="submit" class="btn btn-primary">Сохранить распределение</button>
+          </div>
+          <div id="assignment-result" class="status-text"></div>
         </form>
-        <div id="assignment-result" class="result"></div>
       </section>
 
-      <section id="tab-archive" class="tab-panel">
-        <form id="archive-filter-form" class="archive-filters">
-          <label>Номер накладной
-            <input id="f-invoice-number" placeholder="поиск по номеру">
-          </label>
-          <label>Отправитель
-            <input id="f-shipper" placeholder="поиск по отправителю">
-          </label>
-          <label>Получатель
-            <input id="f-consignee" placeholder="поиск по получателю">
-          </label>
-          <label>С даты создания
-            <input type="date" id="f-created-from">
-          </label>
-          <label>По дату создания
-            <input type="date" id="f-created-to">
-          </label>
-          <label>Только с тарифом
-            <select id="f-has-tariff">
-              <option value="">Все</option>
-              <option value="yes">Да</option>
-              <option value="no">Нет</option>
-            </select>
-          </label>
-          <button type="button" id="clear-archive-filters">Сбросить фильтры</button>
-        </form>
+      <section id="tab-archive" class="tab-panel stack-lg">
+        <article class="section-card card">
+          <h2 class="section-title">Фильтры архива</h2>
+          <form id="archive-filter-form" class="form-grid form-grid-filters">
+            <label class="form-field">
+              <span class="field-label">Номер накладной</span>
+              <input id="f-invoice-number" placeholder="Поиск по номеру">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Отправитель</span>
+              <input id="f-shipper" placeholder="Поиск по отправителю">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Получатель</span>
+              <input id="f-consignee" placeholder="Поиск по получателю">
+            </label>
+            <label class="form-field">
+              <span class="field-label">С даты создания</span>
+              <input type="date" id="f-created-from">
+            </label>
+            <label class="form-field">
+              <span class="field-label">По дату создания</span>
+              <input type="date" id="f-created-to">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Только с тарифом</span>
+              <select id="f-has-tariff">
+                <option value="">Все</option>
+                <option value="yes">Да</option>
+                <option value="no">Нет</option>
+              </select>
+            </label>
+          </form>
+          <div class="action-row">
+            <button type="button" id="clear-archive-filters" class="btn btn-secondary">Сбросить фильтры</button>
+          </div>
+        </article>
 
-        <div class="archive-table-wrap">
-          <table class="archive-table">
-            <thead>
-              <tr>
-                <th>№ накладной</th>
-                <th>Создана</th>
-                <th>Дата накладной</th>
-                <th>Выдача (план)</th>
-                <th>Отправитель</th>
-                <th>Получатель</th>
-                <th>Строк</th>
-                <th>Итог, ₸</th>
-                <th>Тариф</th>
-              </tr>
-            </thead>
-            <tbody id="archive-body"></tbody>
-          </table>
-        </div>
+        <article class="section-card card">
+          <h2 class="section-title">Результаты архива</h2>
+          <div class="archive-table-wrap">
+            <table class="archive-table">
+              <thead>
+                <tr>
+                  <th>№ накладной</th>
+                  <th>Создана</th>
+                  <th>Дата накладной</th>
+                  <th>Выдача (план)</th>
+                  <th>Отправитель</th>
+                  <th>Получатель</th>
+                  <th>Строк</th>
+                  <th>Итог, ₸</th>
+                  <th>Тариф</th>
+                </tr>
+              </thead>
+              <tbody id="archive-body"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
     </main>
 
