@@ -291,7 +291,15 @@ def download_invoice_pdf(invoice_id: str) -> FileResponse:
     pdf_ref = Path(invoice["pdf_file"])
     pdf_path = pdf_ref if pdf_ref.is_absolute() else (BASE_DIR / pdf_ref)
     if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF file not found")
+        # On serverless runtimes /tmp is ephemeral, so regenerate when stale path is stored in DB.
+        _regenerate_pdf(invoice_id)
+        invoice = _invoice_or_404(invoice_id)
+        if not invoice.get("pdf_file"):
+            raise HTTPException(status_code=404, detail="PDF file not found")
+        pdf_ref = Path(invoice["pdf_file"])
+        pdf_path = pdf_ref if pdf_ref.is_absolute() else (BASE_DIR / pdf_ref)
+        if not pdf_path.exists():
+            raise HTTPException(status_code=404, detail="PDF file not found")
     return FileResponse(pdf_path, filename=pdf_path.name, media_type="application/pdf")
 
 
@@ -504,4 +512,3 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
     if new_invoice_id:
         response["new_invoice"] = _invoice_payload(new_invoice_id)
     return response
-
