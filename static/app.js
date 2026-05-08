@@ -36,13 +36,6 @@ function moneyTenge(value) {
   return `${num.toFixed(2)} ₸`;
 }
 
-function setDefaultDate() {
-  const dateInput = document.querySelector("[name='issued_date']");
-  if (!dateInput.value) {
-    dateInput.value = new Date().toISOString().slice(0, 10);
-  }
-}
-
 function normalizeKzPhone(rawValue) {
   const digits = (rawValue || "").replace(/\D/g, "");
   const withoutCountry = digits.startsWith("7") ? digits.slice(1) : digits;
@@ -55,9 +48,7 @@ function initPhoneInputs() {
       input.value = normalizeKzPhone(input.value);
     });
     input.addEventListener("focus", () => {
-      if (!input.value || !input.value.startsWith("+7")) {
-        input.value = "+7";
-      }
+      if (!input.value || !input.value.startsWith("+7")) input.value = "+7";
     });
     input.addEventListener("blur", () => {
       if (input.value.length < 12) {
@@ -69,11 +60,20 @@ function initPhoneInputs() {
   });
 }
 
+function setDefaultDates() {
+  const today = new Date().toISOString().slice(0, 10);
+  const creationDate = document.querySelector("[name='creation_date']");
+  const issuedDate = document.querySelector("[name='issued_date']");
+  const estReleaseDate = document.getElementById("estimated-release-date");
+  if (!creationDate.value) creationDate.value = today;
+  if (!issuedDate.value) issuedDate.value = today;
+  if (!estReleaseDate.value) estReleaseDate.value = today;
+}
+
 function toggleMeasureRequirements(row) {
   const measure = row.querySelector("[data-field='measure']").value;
   const weightInput = row.querySelector("[data-field='weight_kg']");
   const volumeInput = row.querySelector("[data-field='volume_m3']");
-
   if (measure === "weight") {
     weightInput.required = true;
     volumeInput.required = false;
@@ -115,14 +115,11 @@ function renderItemRow(index) {
       </label>
     </div>
   `;
-
   row.querySelector(".remove-item").addEventListener("click", () => {
     row.remove();
     reindexItemRows();
   });
-
-  const measureSelect = row.querySelector("[data-field='measure']");
-  measureSelect.addEventListener("change", () => toggleMeasureRequirements(row));
+  row.querySelector("[data-field='measure']").addEventListener("change", () => toggleMeasureRequirements(row));
   toggleMeasureRequirements(row);
   return row;
 }
@@ -135,33 +132,26 @@ function reindexItemRows() {
 
 function addItemRow() {
   const wrap = document.getElementById("items-wrap");
-  const nextIndex = wrap.querySelectorAll(".item-row").length + 1;
-  wrap.appendChild(renderItemRow(nextIndex));
+  wrap.appendChild(renderItemRow(wrap.querySelectorAll(".item-row").length + 1));
 }
 
 function gatherInvoicePayload() {
   const form = document.getElementById("invoice-form");
   const formData = new FormData(form);
   const items = [];
-
   document.querySelectorAll(".item-row").forEach((row) => {
-    const quantity = Number.parseInt(row.querySelector("[data-field='quantity']").value, 10);
-    const weight = Number(row.querySelector("[data-field='weight_kg']").value || 0);
-    const volume = Number(row.querySelector("[data-field='volume_m3']").value || 0);
-    const measure = row.querySelector("[data-field='measure']").value;
-
     items.push({
       name: row.querySelector("[data-field='name']").value.trim(),
       unit: row.querySelector("[data-field='unit']").value.trim(),
-      quantity,
-      weight_kg: Number(weight.toFixed(2)),
-      volume_m3: Number(volume.toFixed(2)),
-      measure,
+      quantity: Number.parseInt(row.querySelector("[data-field='quantity']").value, 10),
+      weight_kg: Number((Number(row.querySelector("[data-field='weight_kg']").value || 0)).toFixed(2)),
+      volume_m3: Number((Number(row.querySelector("[data-field='volume_m3']").value || 0)).toFixed(2)),
+      measure: row.querySelector("[data-field='measure']").value,
     });
   });
-
   return {
     invoice_number: formData.get("invoice_number").trim(),
+    creation_date: formData.get("creation_date"),
     issued_date: formData.get("issued_date"),
     shipper_name: formData.get("shipper_name").trim(),
     shipper_phone: normalizeKzPhone(formData.get("shipper_phone")),
@@ -183,43 +173,37 @@ function selectTab(tabName) {
 function renderInvoices() {
   const container = document.getElementById("invoices-list");
   container.innerHTML = "";
-
   if (!state.invoices.length) {
     container.innerHTML = "<p>Накладных пока нет.</p>";
     return;
   }
-
   state.invoices.forEach((invoice) => {
     const card = document.createElement("div");
     card.className = "invoice-card";
-
     card.innerHTML = `
       <h3>№ ${invoice.invoice_number}</h3>
-      <p>Дата: ${invoice.issued_date} | Строк: ${invoice.items_count}</p>
+      <p>Создана: ${invoice.creation_date || "-"} | Накладная: ${invoice.issued_date}</p>
+      <p>План выдачи: ${invoice.estimated_release_date || "-"}</p>
       <p>Отправитель: ${invoice.shipper_name}</p>
       <p>Получатель: ${invoice.consignee_name}</p>
-      <p>Тариф: ${invoice.has_tariff ? "назначен" : "не назначен"} | Итог: ${moneyTenge(invoice.total_amount)}</p>
-      <p>PDF: ${invoice.has_pdf ? "готов" : "не создан"}</p>
-      <p>Создано: ${invoice.created_at}</p>
-      <p>Изменено: ${invoice.updated_at}</p>
+      <p>Строк: ${invoice.items_count} | Итог: ${moneyTenge(invoice.total_amount)}</p>
+      <p>Тариф: ${invoice.has_tariff ? "назначен" : "не назначен"} | PDF: ${invoice.has_pdf ? "готов" : "нет"}</p>
       <div class="row-actions">
         <button type="button" data-action="tariff">Тариф</button>
         <button type="button" data-action="wagon">Вагон</button>
         <button type="button" data-action="pdf">PDF</button>
       </div>
     `;
-
     card.querySelector("[data-action='tariff']").addEventListener("click", () => {
       document.getElementById("tariff-invoice-select").value = invoice.invoice_id;
-      selectTab("tariffs");
+      document.getElementById("price-per-kg").focus();
+      selectTab("create");
     });
-
     card.querySelector("[data-action='wagon']").addEventListener("click", async () => {
       document.getElementById("assignment-invoice").value = invoice.invoice_id;
       await loadAssignmentItems();
       selectTab("wagons");
     });
-
     card.querySelector("[data-action='pdf']").addEventListener("click", () => {
       if (!invoice.has_tariff) {
         showToast("PDF доступен только после назначения тарифа");
@@ -227,7 +211,6 @@ function renderInvoices() {
       }
       window.open(`/api/invoices/${invoice.invoice_id}/pdf`, "_blank");
     });
-
     container.appendChild(card);
   });
 }
@@ -237,37 +220,75 @@ function fillInvoiceSelects() {
     document.getElementById("tariff-invoice-select"),
     document.getElementById("assignment-invoice"),
   ];
-
   selects.forEach((select) => {
-    const previous = select.value;
+    const prev = select.value;
     select.innerHTML = "<option value=''>Выберите накладную</option>";
     state.invoices.forEach((invoice) => {
       const option = document.createElement("option");
       option.value = invoice.invoice_id;
-      option.textContent = `№ ${invoice.invoice_number} (${invoice.issued_date})`;
+      option.textContent = `№ ${invoice.invoice_number} (${invoice.creation_date || invoice.issued_date})`;
       select.appendChild(option);
     });
-    if (previous && [...select.options].some((option) => option.value === previous)) {
-      select.value = previous;
-    }
+    if (prev && [...select.options].some((x) => x.value === prev)) select.value = prev;
   });
 }
 
 function fillWagonSelect() {
   const select = document.getElementById("assignment-wagon");
-  const previous = select.value;
+  const prev = select.value;
   select.innerHTML = "<option value=''>Выберите вагон</option>";
   state.wagons.forEach((wagon) => {
     const option = document.createElement("option");
     option.value = wagon.wagon_id;
-    const destination = wagon.destination ? ` | ${wagon.destination}` : "";
-    const description = wagon.description ? ` - ${wagon.description}` : "";
-    option.textContent = `${wagon.wagon_code}${destination}${description}`;
+    option.textContent = `${wagon.wagon_code}${wagon.destination ? ` | ${wagon.destination}` : ""}`;
     select.appendChild(option);
   });
-  if (previous && [...select.options].some((option) => option.value === previous)) {
-    select.value = previous;
+  if (prev && [...select.options].some((x) => x.value === prev)) select.value = prev;
+}
+
+function applyArchiveFilters(source) {
+  const invoiceNumber = document.getElementById("f-invoice-number").value.trim().toLowerCase();
+  const shipper = document.getElementById("f-shipper").value.trim().toLowerCase();
+  const consignee = document.getElementById("f-consignee").value.trim().toLowerCase();
+  const createdFrom = document.getElementById("f-created-from").value;
+  const createdTo = document.getElementById("f-created-to").value;
+  const hasTariff = document.getElementById("f-has-tariff").value;
+
+  return source.filter((row) => {
+    if (invoiceNumber && !row.invoice_number.toLowerCase().includes(invoiceNumber)) return false;
+    if (shipper && !row.shipper_name.toLowerCase().includes(shipper)) return false;
+    if (consignee && !row.consignee_name.toLowerCase().includes(consignee)) return false;
+    if (createdFrom && (row.creation_date || "") < createdFrom) return false;
+    if (createdTo && (row.creation_date || "") > createdTo) return false;
+    if (hasTariff === "yes" && !row.has_tariff) return false;
+    if (hasTariff === "no" && row.has_tariff) return false;
+    return true;
+  });
+}
+
+function renderArchive() {
+  const body = document.getElementById("archive-body");
+  body.innerHTML = "";
+  const filtered = applyArchiveFilters(state.invoices);
+  if (!filtered.length) {
+    body.innerHTML = "<tr><td colspan='9'>Нет данных по фильтрам</td></tr>";
+    return;
   }
+  filtered.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${row.invoice_number}</td>
+      <td>${row.creation_date || "-"}</td>
+      <td>${row.issued_date || "-"}</td>
+      <td>${row.estimated_release_date || "-"}</td>
+      <td>${row.shipper_name}</td>
+      <td>${row.consignee_name}</td>
+      <td>${row.items_count}</td>
+      <td>${moneyTenge(row.total_amount)}</td>
+      <td>${row.has_tariff ? "Да" : "Нет"}</td>
+    `;
+    body.appendChild(tr);
+  });
 }
 
 async function loadInvoices() {
@@ -275,6 +296,7 @@ async function loadInvoices() {
   state.invoices = payload.invoices || [];
   renderInvoices();
   fillInvoiceSelects();
+  renderArchive();
 }
 
 async function loadWagons() {
@@ -286,12 +308,10 @@ async function loadWagons() {
 function renderPartialItems() {
   const wrap = document.getElementById("partial-items");
   wrap.innerHTML = "";
-
   if (!state.assignmentItems.length) {
     wrap.innerHTML = "<p>Выберите накладную с позициями.</p>";
     return;
   }
-
   state.assignmentItems.forEach((item) => {
     const row = document.createElement("div");
     row.className = "partial-row";
@@ -302,11 +322,11 @@ function renderPartialItems() {
       </label>
       <input type="number" min="1" max="${item.quantity}" step="1" value="1" data-partial-qty="${item.item_id}" disabled>
     `;
-    const checkbox = row.querySelector("[data-partial-checkbox]");
-    const qtyInput = row.querySelector(`[data-partial-qty="${item.item_id}"]`);
-    checkbox.addEventListener("change", () => {
-      qtyInput.disabled = !checkbox.checked;
-      if (!checkbox.checked) qtyInput.value = 1;
+    const cb = row.querySelector("[data-partial-checkbox]");
+    const qty = row.querySelector(`[data-partial-qty="${item.item_id}"]`);
+    cb.addEventListener("change", () => {
+      qty.disabled = !cb.checked;
+      if (!cb.checked) qty.value = 1;
     });
     wrap.appendChild(row);
   });
@@ -320,27 +340,23 @@ async function loadAssignmentItems() {
     return;
   }
   const payload = await api(`/api/invoices/${invoiceId}`);
-  state.assignmentItems = payload.items.map((item) => ({
-    ...item,
-    quantity: Number.parseInt(item.quantity, 10),
-  }));
+  state.assignmentItems = payload.items.map((x) => ({ ...x, quantity: Number.parseInt(x.quantity, 10) }));
   renderPartialItems();
 }
 
 function togglePartialBox() {
-  const fullyLoaded = document.getElementById("fully-loaded").value;
-  const partialBox = document.getElementById("partial-box");
-  partialBox.classList.toggle("hidden", fullyLoaded === "yes");
+  document.getElementById("partial-box").classList.toggle(
+    "hidden",
+    document.getElementById("fully-loaded").value === "yes",
+  );
 }
 
 function collectPartialMovedItems() {
   const selected = [];
-  document.querySelectorAll("[data-partial-checkbox]").forEach((checkbox) => {
-    if (!checkbox.checked) return;
-    const itemId = checkbox.value;
-    const qtyInput = document.querySelector(`[data-partial-qty="${itemId}"]`);
-    const movedQuantity = Number.parseInt(qtyInput.value, 10);
-    selected.push({ item_id: itemId, moved_quantity: movedQuantity });
+  document.querySelectorAll("[data-partial-checkbox]").forEach((cb) => {
+    if (!cb.checked) return;
+    const qty = Number.parseInt(document.querySelector(`[data-partial-qty="${cb.value}"]`).value, 10);
+    selected.push({ item_id: cb.value, moved_quantity: qty });
   });
   return selected;
 }
@@ -357,29 +373,20 @@ function initInvoiceForm() {
 
   document.getElementById("invoice-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!event.target.reportValidity()) return;
     try {
       const payload = gatherInvoicePayload();
       if (!payload.items.length) {
         showToast("Добавьте хотя бы одну позицию");
         return;
       }
-
-      if (!event.target.reportValidity()) {
-        return;
-      }
-
-      await api("/api/invoices", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      await api("/api/invoices", { method: "POST", body: JSON.stringify(payload) });
       showToast("Накладная создана");
       event.target.reset();
-      setDefaultDate();
-      document.querySelectorAll(".kz-phone").forEach((input) => {
-        input.value = "+7";
-      });
+      document.querySelectorAll(".kz-phone").forEach((input) => { input.value = "+7"; });
       document.getElementById("items-wrap").innerHTML = "";
       addItemRow();
+      setDefaultDates();
       await loadInvoices();
       selectTab("invoices");
     } catch (error) {
@@ -396,18 +403,16 @@ function initTariffForm() {
       showToast("Выберите накладную");
       return;
     }
-    const body = {
-      price_per_kg: Number(document.getElementById("price-per-kg").value),
-      price_per_m3: Number(document.getElementById("price-per-m3").value),
-    };
     try {
       const payload = await api(`/api/invoices/${invoiceId}/tariff`, {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          price_per_kg: Number(document.getElementById("price-per-kg").value),
+          price_per_m3: Number(document.getElementById("price-per-m3").value),
+        }),
       });
-      const result = payload.invoice;
       document.getElementById("tariff-result").textContent =
-        `Тариф назначен для накладной № ${result.invoice_number}. Итог: ${moneyTenge(result.total_amount)}. PDF обновлен.`;
+        `Тариф назначен для накладной № ${payload.invoice.invoice_number}. Итог: ${moneyTenge(payload.invoice.total_amount)}.`;
       showToast("Тариф применен");
       await loadInvoices();
     } catch (error) {
@@ -419,15 +424,14 @@ function initTariffForm() {
 function initWagonForms() {
   document.getElementById("wagon-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const payload = {
-      wagon_code: document.getElementById("wagon-code").value.trim(),
-      destination: document.getElementById("wagon-destination").value.trim(),
-      description: document.getElementById("wagon-description").value.trim(),
-    };
     try {
       await api("/api/wagons", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          wagon_code: document.getElementById("wagon-code").value.trim(),
+          destination: document.getElementById("wagon-destination").value.trim(),
+          description: document.getElementById("wagon-description").value.trim(),
+        }),
       });
       showToast("Вагон сохранен");
       event.target.reset();
@@ -445,12 +449,12 @@ function initWagonForms() {
     event.preventDefault();
     const invoiceId = document.getElementById("assignment-invoice").value;
     const wagonId = document.getElementById("assignment-wagon").value;
-    const fullyLoadedValue = document.getElementById("fully-loaded").value;
-    const fullyLoaded = fullyLoadedValue === "yes";
+    const estimatedReleaseDate = document.getElementById("estimated-release-date").value;
+    const fullyLoaded = document.getElementById("fully-loaded").value === "yes";
     const partialItems = collectPartialMovedItems();
 
-    if (!invoiceId || !wagonId) {
-      showToast("Выберите накладную и вагон");
+    if (!invoiceId || !wagonId || !estimatedReleaseDate) {
+      showToast("Заполните накладную, вагон и дату выдачи");
       return;
     }
     if (!fullyLoaded && !partialItems.length) {
@@ -464,21 +468,40 @@ function initWagonForms() {
         body: JSON.stringify({
           invoice_id: invoiceId,
           wagon_id: wagonId,
+          estimated_release_date: estimatedReleaseDate,
           fully_loaded: fullyLoaded,
           items: fullyLoaded ? [] : partialItems,
         }),
       });
-      let message = "Распределение сохранено.";
+      let msg = "Распределение сохранено.";
       if (payload.new_invoice?.invoice?.invoice_number) {
-        message += ` Создана новая накладная: № ${payload.new_invoice.invoice.invoice_number}.`;
+        msg += ` Создана новая накладная: № ${payload.new_invoice.invoice.invoice_number}.`;
       }
-      document.getElementById("assignment-result").textContent = message;
+      document.getElementById("assignment-result").textContent = msg;
       showToast("Распределение выполнено");
       await Promise.all([loadInvoices(), loadWagons()]);
       await loadAssignmentItems();
     } catch (error) {
       showToast(error.message);
     }
+  });
+}
+
+function initArchiveFilters() {
+  [
+    "f-invoice-number",
+    "f-shipper",
+    "f-consignee",
+    "f-created-from",
+    "f-created-to",
+    "f-has-tariff",
+  ].forEach((id) => {
+    document.getElementById(id).addEventListener("input", renderArchive);
+    document.getElementById(id).addEventListener("change", renderArchive);
+  });
+  document.getElementById("clear-archive-filters").addEventListener("click", () => {
+    document.getElementById("archive-filter-form").reset();
+    renderArchive();
   });
 }
 
@@ -492,11 +515,12 @@ function initTelegramWebApp() {
 async function bootstrap() {
   initTelegramWebApp();
   initTabs();
-  setDefaultDate();
   initPhoneInputs();
   initInvoiceForm();
   initTariffForm();
   initWagonForms();
+  initArchiveFilters();
+  setDefaultDates();
 
   document.getElementById("refresh-invoices").addEventListener("click", loadInvoices);
   await Promise.all([loadInvoices(), loadWagons()]);
@@ -506,3 +530,4 @@ bootstrap().catch((error) => {
   console.error(error);
   showToast("Ошибка инициализации");
 });
+

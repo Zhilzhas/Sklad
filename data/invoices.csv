@@ -1,1 +1,1 @@
-invoice_id,invoice_number,shipper_name,shipper_phone,consignee_name,consignee_phone,issued_date,tariff_price_per_kg,tariff_price_per_m3,total_amount,pdf_file,created_at,updated_at
+invoice_id,invoice_number,shipper_name,shipper_phone,consignee_name,consignee_phone,creation_date,issued_date,estimated_release_date,tariff_price_per_kg,tariff_price_per_m3,total_amount,pdf_file,created_at,updated_at

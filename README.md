@@ -4,10 +4,12 @@ MVP for warehouse logistics workflow in Telegram Mini App:
 
 - create invoices with cargo items
 - save data to CSV (test storage)
-- apply tariff to selected invoice only
+- apply tariff to a selected invoice (inside the create invoice tab)
 - calculate item totals and invoice total in tenge (`₸`)
-- generate PDF in 3 copies only after tariff is set
+- generate one PDF copy only after tariff is set
 - assign invoice cargo to wagon (full or partial with remainder invoice)
+- set estimated cargo release date during wagon assignment
+- browse all invoices in Archive tab with search and filters
 
 ## Stack
 
@@ -38,7 +40,7 @@ Inside `data/`:
 
 1. Push this project to GitHub.
 2. In Vercel: `Add New Project` -> import your GitHub repository.
-3. Framework preset: `Other` (or auto-detected Python/FastAPI).
+3. Framework preset: `FastAPI` (or `Other` if FastAPI is not shown).
 4. Root directory: project root.
 5. Deploy.
 6. Copy resulting URL `https://<project>.vercel.app`.
@@ -46,6 +48,7 @@ Inside `data/`:
 
 ### Vercel notes
 
-- FastAPI entrypoint is `app/app.py` (already added).
-- Vercel Functions filesystem is read-only except `/tmp`; app is configured to write CSV/PDF into `/tmp/sklad`.
+- FastAPI entrypoint is `app/app.py`.
+- Vercel Functions filesystem is read-only except `/tmp`; app writes CSV/PDF to `/tmp/sklad`.
 - `/tmp` is ephemeral, so data is not persistent between cold starts/redeploys.
+

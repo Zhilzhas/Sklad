@@ -11,14 +11,14 @@
   <div class="app">
     <header class="header">
       <h1>Склад Логистика</h1>
-      <p>Накладные, тарифы (в ₸) и распределение по вагонам</p>
+      <p>Накладные, тарифы (₸), вагоны и архив</p>
     </header>
 
     <nav class="tabs">
       <button class="tab active" data-tab="create">Новая накладная</button>
       <button class="tab" data-tab="invoices">Накладные</button>
-      <button class="tab" data-tab="tariffs">Тарифы</button>
       <button class="tab" data-tab="wagons">Вагоны</button>
+      <button class="tab" data-tab="archive">Архив</button>
     </nav>
 
     <main>
@@ -27,6 +27,9 @@
           <div class="grid compact-grid">
             <label>Номер накладной/заявки
               <input name="invoice_number" required>
+            </label>
+            <label>Дата создания накладной
+              <input type="date" name="creation_date" required>
             </label>
             <label>Дата накладной
               <input type="date" name="issued_date" required>
@@ -50,21 +53,11 @@
             <button type="button" id="add-item-btn">+ Строка</button>
           </div>
           <div id="items-wrap"></div>
-
-          <p class="hint">PDF формируется только после назначения тарифа для выбранной накладной.</p>
           <button type="submit" class="primary">Создать накладную</button>
         </form>
-      </section>
 
-      <section id="tab-invoices" class="tab-panel">
-        <div class="section-actions">
-          <button type="button" id="refresh-invoices">Обновить список</button>
-        </div>
-        <div id="invoices-list"></div>
-      </section>
-
-      <section id="tab-tariffs" class="tab-panel">
         <form id="tariff-form" class="compact-form">
+          <h2>Тарифы</h2>
           <label>Выберите накладную
             <select id="tariff-invoice-select" required></select>
           </label>
@@ -74,9 +67,16 @@
           <label>Цена за 1 м³ (₸)
             <input type="number" step="0.01" min="0" id="price-per-m3" required>
           </label>
-          <button type="submit" class="primary">Применить тариф к выбранной накладной</button>
+          <button type="submit" class="primary">Применить тариф</button>
+          <div id="tariff-result" class="result"></div>
         </form>
-        <div id="tariff-result" class="result"></div>
+      </section>
+
+      <section id="tab-invoices" class="tab-panel">
+        <div class="section-actions">
+          <button type="button" id="refresh-invoices">Обновить список</button>
+        </div>
+        <div id="invoices-list"></div>
       </section>
 
       <section id="tab-wagons" class="tab-panel">
@@ -102,7 +102,9 @@
           <label>Вагон
             <select id="assignment-wagon" required></select>
           </label>
-
+          <label>Дата приблизительно выдачи груза
+            <input type="date" id="estimated-release-date" required>
+          </label>
           <label>Груз полностью поместился в вагон?
             <select id="fully-loaded" required>
               <option value="yes">Да</option>
@@ -117,14 +119,59 @@
 
           <button type="submit" class="primary">Сохранить распределение</button>
         </form>
-
         <div id="assignment-result" class="result"></div>
+      </section>
+
+      <section id="tab-archive" class="tab-panel">
+        <form id="archive-filter-form" class="archive-filters">
+          <label>Номер накладной
+            <input id="f-invoice-number" placeholder="поиск по номеру">
+          </label>
+          <label>Отправитель
+            <input id="f-shipper" placeholder="поиск по отправителю">
+          </label>
+          <label>Получатель
+            <input id="f-consignee" placeholder="поиск по получателю">
+          </label>
+          <label>С даты создания
+            <input type="date" id="f-created-from">
+          </label>
+          <label>По дату создания
+            <input type="date" id="f-created-to">
+          </label>
+          <label>Только с тарифом
+            <select id="f-has-tariff">
+              <option value="">Все</option>
+              <option value="yes">Да</option>
+              <option value="no">Нет</option>
+            </select>
+          </label>
+          <button type="button" id="clear-archive-filters">Сбросить фильтры</button>
+        </form>
+
+        <div class="archive-table-wrap">
+          <table class="archive-table">
+            <thead>
+              <tr>
+                <th>№ накладной</th>
+                <th>Создана</th>
+                <th>Дата накладной</th>
+                <th>Выдача (план)</th>
+                <th>Отправитель</th>
+                <th>Получатель</th>
+                <th>Строк</th>
+                <th>Итог, ₸</th>
+                <th>Тариф</th>
+              </tr>
+            </thead>
+            <tbody id="archive-body"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 
     <div id="toast" class="toast"></div>
   </div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>

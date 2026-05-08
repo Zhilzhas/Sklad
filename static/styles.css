@@ -104,6 +104,11 @@ select {
   font-size: 13px;
 }
 
+input[type="checkbox"] {
+  width: auto;
+  margin-top: 0;
+}
+
 button {
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -207,6 +212,8 @@ button.primary:hover {
 
 .compact-form {
   margin-bottom: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
 }
 
 .hint {
@@ -254,6 +261,37 @@ button.primary:hover {
   color: var(--muted);
 }
 
+.archive-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.archive-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.archive-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 860px;
+  font-size: 12px;
+}
+
+.archive-table th,
+.archive-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.archive-table th {
+  background: #f3f7fa;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -276,6 +314,7 @@ button.primary:hover {
 @media (max-width: 760px) {
   .grid,
   .tabs,
+  .archive-filters,
   .item-grid,
   .partial-row {
     grid-template-columns: 1fr;

@@ -34,6 +34,7 @@ class InvoiceCreate(BaseModel):
     shipper_phone: str = Field(pattern=KZ_PHONE_PATTERN)
     consignee_name: str = Field(min_length=1, max_length=200)
     consignee_phone: str = Field(pattern=KZ_PHONE_PATTERN)
+    creation_date: date
     issued_date: date
     items: list[InvoiceItemCreate] = Field(min_length=1)
 
@@ -65,6 +66,7 @@ class WagonAssignItem(BaseModel):
 class WagonAssignRequest(BaseModel):
     invoice_id: str
     wagon_id: str
+    estimated_release_date: date
     fully_loaded: bool
     items: list[WagonAssignItem] = Field(default_factory=list)
 

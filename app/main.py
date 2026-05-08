@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -28,11 +29,12 @@ if os.getenv("VERCEL"):
 else:
     DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
     PDF_DIR = Path(os.getenv("PDF_DIR", str(BASE_DIR / "pdf")))
+
 STATIC_DIR = BASE_DIR / "static"
 
 store = CsvStore(DATA_DIR)
 
-app = FastAPI(title="Sklad Logistics Mini App", version="0.2.0")
+app = FastAPI(title="Sklad Logistics Mini App", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -60,13 +62,16 @@ def _fmt2(value: float) -> str:
     return f"{value:.2f}"
 
 
+def _today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 def _has_tariff(invoice: dict[str, str]) -> bool:
     return invoice.get("tariff_price_per_kg", "") != "" and invoice.get("tariff_price_per_m3", "") != ""
 
 
 def _invoice_or_404(invoice_id: str) -> dict[str, str]:
-    invoices = store.list_rows("invoices")
-    for row in invoices:
+    for row in store.list_rows("invoices"):
         if row["invoice_id"] == invoice_id:
             return row
     raise HTTPException(status_code=404, detail="Invoice not found")
@@ -140,10 +145,12 @@ def _regenerate_pdf(invoice_id: str) -> str:
     items = _items_by_invoice(invoice_id)
     pdf_path = PDF_DIR / f"invoice_{invoice['invoice_number']}_{invoice['invoice_id']}.pdf"
     generate_invoice_pdf(pdf_path, invoice, items)
+
     try:
         pdf_ref = str(pdf_path.relative_to(BASE_DIR))
     except ValueError:
         pdf_ref = str(pdf_path)
+
     store.update_rows(
         "invoices",
         predicate=lambda row: row["invoice_id"] == invoice_id,
@@ -155,18 +162,13 @@ def _regenerate_pdf(invoice_id: str) -> str:
 def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
     invoice = _invoice_or_404(invoice_id)
     if not _has_tariff(invoice):
-        store.update_rows(
-            "invoices",
-            predicate=lambda row: row["invoice_id"] == invoice_id,
-            updater=lambda row: row,
-        )
         return
 
     price_per_kg = _to_float(invoice["tariff_price_per_kg"])
     price_per_m3 = _to_float(invoice["tariff_price_per_m3"])
     items = _items_by_invoice(invoice_id)
-    updated_items: dict[str, dict[str, str]] = {}
 
+    updated_items: dict[str, dict[str, str]] = {}
     total_amount = 0.0
     for item in items:
         if item["measure"] == "weight":
@@ -190,10 +192,7 @@ def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
     store.update_rows(
         "invoices",
         predicate=lambda row: row["invoice_id"] == invoice_id,
-        updater=lambda row: {
-            **row,
-            "total_amount": _fmt2(round(total_amount, 2)),
-        },
+        updater=lambda row: {**row, "total_amount": _fmt2(round(total_amount, 2))},
     )
     _regenerate_pdf(invoice_id)
 
@@ -220,7 +219,9 @@ def create_invoice(payload: InvoiceCreate) -> dict:
             "shipper_phone": payload.shipper_phone,
             "consignee_name": payload.consignee_name,
             "consignee_phone": payload.consignee_phone,
+            "creation_date": payload.creation_date.isoformat(),
             "issued_date": payload.issued_date.isoformat(),
+            "estimated_release_date": "",
             "tariff_price_per_kg": "",
             "tariff_price_per_m3": "",
             "total_amount": "0.00",
@@ -255,8 +256,7 @@ def list_invoices() -> dict[str, list[dict]]:
     items = store.list_rows("invoice_items")
     items_count_by_invoice: dict[str, int] = {}
     for item in items:
-        invoice_id = item["invoice_id"]
-        items_count_by_invoice[invoice_id] = items_count_by_invoice.get(invoice_id, 0) + 1
+        items_count_by_invoice[item["invoice_id"]] = items_count_by_invoice.get(item["invoice_id"], 0) + 1
 
     invoices.sort(key=lambda row: row["created_at"], reverse=True)
     payload = []
@@ -281,32 +281,30 @@ def get_invoice(invoice_id: str) -> dict:
 def download_invoice_pdf(invoice_id: str) -> FileResponse:
     invoice = _invoice_or_404(invoice_id)
     if not _has_tariff(invoice):
-        raise HTTPException(status_code=400, detail="PDF создается только после назначения тарифа")
+        raise HTTPException(status_code=400, detail="PDF is generated only after tariff assignment")
     if not invoice.get("pdf_file"):
         _regenerate_pdf(invoice_id)
         invoice = _invoice_or_404(invoice_id)
     if not invoice.get("pdf_file"):
-        raise HTTPException(status_code=404, detail="PDF не найден")
+        raise HTTPException(status_code=404, detail="PDF not found")
+
     pdf_ref = Path(invoice["pdf_file"])
     pdf_path = pdf_ref if pdf_ref.is_absolute() else (BASE_DIR / pdf_ref)
     if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF файл не найден")
+        raise HTTPException(status_code=404, detail="PDF file not found")
     return FileResponse(pdf_path, filename=pdf_path.name, media_type="application/pdf")
 
 
 @app.post("/api/invoices/{invoice_id}/tariff")
 def apply_tariff_to_selected_invoice(invoice_id: str, payload: TariffApply) -> dict:
     _invoice_or_404(invoice_id)
-    price_per_kg = round(payload.price_per_kg, 2)
-    price_per_m3 = round(payload.price_per_m3, 2)
-
     store.update_rows(
         "invoices",
         predicate=lambda row: row["invoice_id"] == invoice_id,
         updater=lambda row: {
             **row,
-            "tariff_price_per_kg": _fmt2(price_per_kg),
-            "tariff_price_per_m3": _fmt2(price_per_m3),
+            "tariff_price_per_kg": _fmt2(round(payload.price_per_kg, 2)),
+            "tariff_price_per_m3": _fmt2(round(payload.price_per_m3, 2)),
         },
     )
     _recalculate_invoice_with_tariff(invoice_id)
@@ -334,10 +332,9 @@ def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
                     "description": payload.description or "",
                 },
             )
-            updated = [row for row in store.list_rows("wagons") if row["wagon_id"] == wagon["wagon_id"]][0]
-            return updated
+            return [row for row in store.list_rows("wagons") if row["wagon_id"] == wagon["wagon_id"]][0]
 
-    wagon = store.append_row(
+    return store.append_row(
         "wagons",
         {
             "wagon_id": str(uuid.uuid4()),
@@ -346,7 +343,6 @@ def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
             "description": payload.description or "",
         },
     )
-    return wagon
 
 
 @app.get("/api/allocations")
@@ -365,12 +361,11 @@ def create_allocation(payload: WagonAllocationCreate) -> dict[str, str]:
     if payload.wagon_id not in wagons:
         raise HTTPException(status_code=404, detail="Wagon not found")
 
-    items = _items_by_invoice(payload.invoice_id)
-    item_ids = {item["item_id"] for item in items}
+    item_ids = {item["item_id"] for item in _items_by_invoice(payload.invoice_id)}
     if payload.item_id not in item_ids:
         raise HTTPException(status_code=400, detail="Item does not belong to invoice")
 
-    allocation = store.append_row(
+    return store.append_row(
         "wagon_allocations",
         {
             "allocation_id": str(uuid.uuid4()),
@@ -381,7 +376,6 @@ def create_allocation(payload: WagonAllocationCreate) -> dict[str, str]:
             "allocation_value": str(payload.allocation_value),
         },
     )
-    return allocation
 
 
 @app.post("/api/wagon-assignments")
@@ -408,7 +402,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
     item_map = {item["item_id"]: item for item in items}
     for item_id in moved_quantity_by_item:
         if item_id not in item_map:
-            raise HTTPException(status_code=400, detail="One of selected items does not belong to invoice")
+            raise HTTPException(status_code=400, detail="One selected item does not belong to invoice")
 
     moved_rows: list[dict[str, str]] = []
     remaining_rows: list[dict[str, str]] = []
@@ -425,8 +419,6 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
                     "quantity": str(moved_qty),
                     "weight_kg": _fmt2(_scale_value(item["weight_kg"], original_qty, moved_qty)),
                     "volume_m3": _fmt2(_scale_value(item["volume_m3"], original_qty, moved_qty)),
-                    "unit_price": item.get("unit_price", ""),
-                    "line_total": item.get("line_total", ""),
                 }
             )
             store.append_row(
@@ -455,9 +447,17 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
             )
 
     if not moved_rows:
-        raise HTTPException(status_code=400, detail="Nothing was assigned to the wagon")
+        raise HTTPException(status_code=400, detail="Nothing was assigned to wagon")
 
     _replace_invoice_items(payload.invoice_id, moved_rows)
+    store.update_rows(
+        "invoices",
+        predicate=lambda row: row["invoice_id"] == payload.invoice_id,
+        updater=lambda row: {
+            **row,
+            "estimated_release_date": payload.estimated_release_date.isoformat(),
+        },
+    )
     _recalculate_invoice_with_tariff(payload.invoice_id)
 
     new_invoice_id = ""
@@ -473,7 +473,9 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
                 "shipper_phone": invoice["shipper_phone"],
                 "consignee_name": invoice["consignee_name"],
                 "consignee_phone": invoice["consignee_phone"],
+                "creation_date": _today_iso(),
                 "issued_date": invoice["issued_date"],
+                "estimated_release_date": "",
                 "tariff_price_per_kg": "",
                 "tariff_price_per_m3": "",
                 "total_amount": "0.00",
@@ -498,9 +500,8 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
                 },
             )
 
-    response: dict[str, object] = {
-        "assigned_invoice": _invoice_payload(payload.invoice_id),
-    }
+    response: dict[str, object] = {"assigned_invoice": _invoice_payload(payload.invoice_id)}
     if new_invoice_id:
         response["new_invoice"] = _invoice_payload(new_invoice_id)
     return response
+
