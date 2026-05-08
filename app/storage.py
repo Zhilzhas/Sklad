@@ -156,7 +156,9 @@ class _CsvBackend:
 class _SqlBackend:
     def __init__(self, database_url: str) -> None:
         if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
+            database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif database_url.startswith("postgresql://"):
+            database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
         self.engine = create_engine(database_url, future=True, pool_pre_ping=True)
         self.metadata = MetaData()
         self.tables: dict[str, Table] = {}
@@ -245,4 +247,3 @@ class CsvStore:
 
     def replace_rows(self, table_name: str, rows: list[dict[str, str]]) -> None:
         self._backend.replace_rows(table_name, rows)
-
