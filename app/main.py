@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,6 +92,26 @@ def _next_split_invoice_number(base_number: str) -> str:
         if candidate not in existing_numbers:
             return candidate
         index += 1
+
+
+def _next_code(rows: list[dict[str, str]], key: str, prefix: str, width: int) -> str:
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+    max_num = 0
+    for row in rows:
+        value = (row.get(key) or "").strip()
+        match = pattern.match(value)
+        if not match:
+            continue
+        max_num = max(max_num, int(match.group(1)))
+    return f"{prefix}{str(max_num + 1).zfill(width)}"
+
+
+def _next_invoice_number() -> str:
+    return _next_code(store.list_rows("invoices"), "invoice_number", "INV-", 6)
+
+
+def _next_wagon_code() -> str:
+    return _next_code(store.list_rows("wagons"), "wagon_code", "WG-", 5)
 
 
 def _scale_value(original_value: str, original_qty: int, new_qty: int) -> float:
@@ -207,14 +228,48 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/next-numbers")
+def next_numbers() -> dict[str, str]:
+    return {
+        "next_invoice_number": _next_invoice_number(),
+        "next_wagon_code": _next_wagon_code(),
+    }
+
+
+@app.get("/api/item-templates")
+def item_templates() -> dict[str, list[dict[str, str]]]:
+    templates: dict[str, dict[str, str]] = {}
+    for row in store.list_rows("invoice_items"):
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        existing = templates.get(name)
+        if not existing or row.get("updated_at", "") > existing.get("updated_at", ""):
+            templates[name] = row
+    result = []
+    for name, row in templates.items():
+        result.append(
+            {
+                "name": name,
+                "unit": row.get("unit", ""),
+                "weight_kg": row.get("weight_kg", ""),
+                "volume_m3": row.get("volume_m3", ""),
+                "measure": row.get("measure", ""),
+            }
+        )
+    result.sort(key=lambda x: x["name"].lower())
+    return {"templates": result}
+
+
 @app.post("/api/invoices")
 def create_invoice(payload: InvoiceCreate) -> dict:
     invoice_id = str(uuid.uuid4())
+    invoice_number = _next_invoice_number()
     store.append_row(
         "invoices",
         {
             "invoice_id": invoice_id,
-            "invoice_number": payload.invoice_number,
+            "invoice_number": invoice_number,
             "shipper_name": payload.shipper_name,
             "shipper_phone": payload.shipper_phone,
             "consignee_name": payload.consignee_name,
@@ -329,8 +384,9 @@ def list_wagons() -> dict[str, list[dict[str, str]]]:
 @app.post("/api/wagons")
 def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
     wagons = store.list_rows("wagons")
+    incoming_code = (payload.wagon_code or "").strip()
     for wagon in wagons:
-        if wagon["wagon_code"].strip().lower() == payload.wagon_code.strip().lower():
+        if incoming_code and wagon["wagon_code"].strip().lower() == incoming_code.lower():
             store.update_rows(
                 "wagons",
                 predicate=lambda row: row["wagon_id"] == wagon["wagon_id"],
@@ -346,7 +402,7 @@ def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
         "wagons",
         {
             "wagon_id": str(uuid.uuid4()),
-            "wagon_code": payload.wagon_code.strip(),
+            "wagon_code": incoming_code or _next_wagon_code(),
             "destination": payload.destination or "",
             "description": payload.description or "",
         },
@@ -471,7 +527,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
     new_invoice_id = ""
     if remaining_rows:
         new_invoice_id = str(uuid.uuid4())
-        new_invoice_number = _next_split_invoice_number(invoice["invoice_number"])
+        new_invoice_number = _next_invoice_number()
         store.append_row(
             "invoices",
             {

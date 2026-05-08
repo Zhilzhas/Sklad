@@ -10,16 +10,9 @@
 <body>
   <div class="app-shell">
     <header class="app-header card">
-      <h1 class="app-title">Склад Логистика</h1>
+      <h1 class="app-title">Прием и управление складом</h1>
       <p class="app-subtitle">Накладные, тарифы (₸), вагоны и архив</p>
     </header>
-
-    <nav class="top-tabs" aria-label="Основные разделы">
-      <button class="top-tab active" data-tab="create">Новая накладная</button>
-      <button class="top-tab" data-tab="invoices">Накладные</button>
-      <button class="top-tab" data-tab="wagons">Вагоны</button>
-      <button class="top-tab" data-tab="archive">Архив</button>
-    </nav>
 
     <main class="page-content">
       <section id="tab-create" class="tab-panel active">
@@ -29,7 +22,7 @@
             <div class="form-grid">
               <label class="form-field">
                 <span class="field-label">Номер накладной/заявки</span>
-                <input name="invoice_number" required>
+                <input name="invoice_number" id="invoice-number" readonly placeholder="Автоматически">
               </label>
               <label class="form-field">
                 <span class="field-label">Дата создания накладной</span>
@@ -63,6 +56,7 @@
               <h2 class="section-title">Позиции груза</h2>
               <button type="button" id="add-item-btn" class="btn btn-secondary">+ Добавить строку</button>
             </div>
+            <datalist id="item-name-options"></datalist>
             <div id="items-wrap" class="stack-md"></div>
           </article>
 
@@ -111,7 +105,7 @@
           <div class="form-grid">
             <label class="form-field">
               <span class="field-label">Номер вагона</span>
-              <input id="wagon-code" required>
+              <input id="wagon-code" readonly placeholder="Автоматически">
             </label>
             <label class="form-field">
               <span class="field-label">Назначение (направление)</span>
@@ -271,6 +265,7 @@
                       <th>Вес, кг</th>
                       <th>Объем, м³</th>
                       <th>Мера</th>
+                      <th>Тариф, ₸</th>
                       <th>Сумма, ₸</th>
                     </tr>
                   </thead>
@@ -282,6 +277,13 @@
         </div>
       </section>
     </main>
+
+    <nav class="bottom-tabs" aria-label="Основные разделы">
+      <button class="bottom-tab active" data-tab="create">Новая накладная</button>
+      <button class="bottom-tab" data-tab="invoices">Накладные</button>
+      <button class="bottom-tab" data-tab="wagons">Вагоны</button>
+      <button class="bottom-tab" data-tab="archive">Архив</button>
+    </nav>
 
     <div id="toast" class="toast"></div>
   </div>

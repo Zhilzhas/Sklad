@@ -29,7 +29,7 @@ class InvoiceItemCreate(BaseModel):
 
 
 class InvoiceCreate(BaseModel):
-    invoice_number: str = Field(min_length=1, max_length=100)
+    invoice_number: str | None = Field(default=None, min_length=1, max_length=100)
     shipper_name: str = Field(min_length=1, max_length=200)
     shipper_phone: str = Field(pattern=KZ_PHONE_PATTERN)
     consignee_name: str = Field(min_length=1, max_length=200)
@@ -45,7 +45,7 @@ class TariffApply(BaseModel):
 
 
 class WagonCreate(BaseModel):
-    wagon_code: str = Field(min_length=1, max_length=100)
+    wagon_code: str | None = Field(default=None, min_length=1, max_length=100)
     destination: str | None = Field(default=None, max_length=150)
     description: str | None = Field(default=None, max_length=250)
 

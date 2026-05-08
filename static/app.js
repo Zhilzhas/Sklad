@@ -3,6 +3,7 @@ const state = {
   wagons: [],
   allocations: [],
   assignmentItems: [],
+  itemTemplates: [],
   selectedArchiveInvoiceId: "",
 };
 
@@ -72,6 +73,32 @@ function setDefaultDates() {
   if (!estReleaseDate.value) estReleaseDate.value = today;
 }
 
+function applyItemNameOptions() {
+  const datalist = document.getElementById("item-name-options");
+  if (!datalist) return;
+  datalist.innerHTML = "";
+  state.itemTemplates.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.name;
+    datalist.appendChild(option);
+  });
+}
+
+function templateByName(name) {
+  const key = (name || "").trim().toLowerCase();
+  return state.itemTemplates.find((x) => x.name.toLowerCase() === key) || null;
+}
+
+function applyTemplateToRow(row, template) {
+  if (!template) return;
+  const unit = row.querySelector("[data-field='unit']");
+  const weight = row.querySelector("[data-field='weight_kg']");
+  const volume = row.querySelector("[data-field='volume_m3']");
+  if (unit) unit.value = template.unit || "";
+  if (weight) weight.value = template.weight_kg || "";
+  if (volume) volume.value = template.volume_m3 || "";
+}
+
 function toggleMeasureRequirements(row) {
   const measure = row.querySelector("[data-field='measure']").value;
   const weightInput = row.querySelector("[data-field='weight_kg']");
@@ -96,7 +123,7 @@ function CargoPositionCard(index) {
     <div class="item-grid">
       <label class="form-field">
         <span class="field-label">Наименование</span>
-        <input data-field="name" required>
+        <input data-field="name" list="item-name-options" required>
       </label>
       <label class="form-field">
         <span class="field-label">Ед. измерения</span>
@@ -129,6 +156,14 @@ function CargoPositionCard(index) {
     reindexItemRows();
   });
   row.querySelector("[data-field='measure']").addEventListener("change", () => toggleMeasureRequirements(row));
+  row.querySelector("[data-field='name']").addEventListener("change", (event) => {
+    const tpl = templateByName(event.target.value);
+    if (tpl) applyTemplateToRow(row, tpl);
+  });
+  row.querySelector("[data-field='name']").addEventListener("blur", (event) => {
+    const tpl = templateByName(event.target.value);
+    if (tpl) applyTemplateToRow(row, tpl);
+  });
   toggleMeasureRequirements(row);
   return row;
 }
@@ -159,7 +194,7 @@ function gatherInvoicePayload() {
     });
   });
   return {
-    invoice_number: formData.get("invoice_number").trim(),
+    invoice_number: formData.get("invoice_number"),
     creation_date: formData.get("creation_date"),
     issued_date: formData.get("issued_date"),
     shipper_name: formData.get("shipper_name").trim(),
@@ -171,7 +206,7 @@ function gatherInvoicePayload() {
 }
 
 function selectTab(tabName) {
-  document.querySelectorAll(".top-tab").forEach((tab) => {
+  document.querySelectorAll(".bottom-tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabName);
   });
   document.querySelectorAll(".tab-panel").forEach((panel) => {
@@ -390,11 +425,13 @@ async function loadArchiveInvoiceDetails(invoiceId) {
       <p class="invoice-meta"><span class="meta-strong">Куда едет:</span> ${directions.size ? [...directions].join(", ") : "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">План выдачи:</span> ${invoice.estimated_release_date || "-"}</p>
+      <p class="invoice-meta"><span class="meta-strong">Тариф за 1 кг:</span> ${moneyTenge(invoice.tariff_price_per_kg || 0)} | <span class="meta-strong">Тариф за 1 м³:</span> ${moneyTenge(invoice.tariff_price_per_m3 || 0)}</p>
+      <p class="invoice-meta"><span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount || 0)}</p>
     `;
 
     itemsBody.innerHTML = "";
     if (!items.length) {
-      itemsBody.innerHTML = "<tr><td colspan='8'>В накладной нет позиций</td></tr>";
+      itemsBody.innerHTML = "<tr><td colspan='9'>В накладной нет позиций</td></tr>";
     } else {
       items.forEach((item) => {
         const tr = document.createElement("tr");
@@ -406,6 +443,7 @@ async function loadArchiveInvoiceDetails(invoiceId) {
           <td>${item.weight_kg}</td>
           <td>${item.volume_m3}</td>
           <td>${item.measure === "weight" ? "Вес" : "Объем"}</td>
+          <td>${moneyTenge(item.unit_price || 0)}</td>
           <td>${moneyTenge(item.line_total || 0)}</td>
         `;
         itemsBody.appendChild(tr);
@@ -440,6 +478,20 @@ async function loadAllocations() {
   const payload = await api("/api/allocations");
   state.allocations = payload.allocations || [];
   renderArchiveWagonsTable();
+}
+
+async function loadNextNumbers() {
+  const payload = await api("/api/next-numbers");
+  const invoiceInput = document.getElementById("invoice-number");
+  const wagonInput = document.getElementById("wagon-code");
+  if (invoiceInput) invoiceInput.value = payload.next_invoice_number || "";
+  if (wagonInput) wagonInput.value = payload.next_wagon_code || "";
+}
+
+async function loadItemTemplates() {
+  const payload = await api("/api/item-templates");
+  state.itemTemplates = payload.templates || [];
+  applyItemNameOptions();
 }
 
 function renderPartialItems() {
@@ -499,7 +551,7 @@ function collectPartialMovedItems() {
 }
 
 function initTabs() {
-  document.querySelectorAll(".top-tab").forEach((button) => {
+  document.querySelectorAll(".bottom-tab").forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
   });
 }
@@ -526,7 +578,7 @@ function initInvoiceForm() {
       document.getElementById("items-wrap").innerHTML = "";
       addItemRow();
       setDefaultDates();
-      await Promise.all([loadInvoices(), loadAllocations()]);
+      await Promise.all([loadInvoices(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
       selectTab("invoices");
     } catch (error) {
       showToast(error.message);
@@ -574,7 +626,7 @@ function initWagonForms() {
       });
       showToast("Вагон сохранен");
       event.target.reset();
-      await loadWagons();
+      await Promise.all([loadWagons(), loadNextNumbers()]);
     } catch (error) {
       showToast(error.message);
     }
@@ -618,7 +670,7 @@ function initWagonForms() {
       }
       document.getElementById("assignment-result").textContent = msg;
       showToast("Распределение выполнено");
-      await Promise.all([loadInvoices(), loadWagons(), loadAllocations()]);
+      await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
       await loadAssignmentItems();
     } catch (error) {
       showToast(error.message);
@@ -670,14 +722,13 @@ async function bootstrap() {
   setDefaultDates();
 
   document.getElementById("refresh-invoices").addEventListener("click", async () => {
-    await Promise.all([loadInvoices(), loadAllocations()]);
+    await Promise.all([loadInvoices(), loadAllocations(), loadItemTemplates()]);
   });
 
-  await Promise.all([loadInvoices(), loadWagons(), loadAllocations()]);
+  await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
 }
 
 bootstrap().catch((error) => {
   console.error(error);
   showToast("Ошибка инициализации");
 });
-
