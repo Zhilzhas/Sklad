@@ -1,7 +1,9 @@
 const state = {
   invoices: [],
   wagons: [],
+  allocations: [],
   assignmentItems: [],
+  selectedArchiveInvoiceId: "",
 };
 
 const toast = document.getElementById("toast");
@@ -177,6 +179,15 @@ function selectTab(tabName) {
   });
 }
 
+function selectArchiveSubtab(tabName) {
+  document.querySelectorAll(".archive-subtab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.archiveTab === tabName);
+  });
+  document.querySelectorAll(".archive-subpanel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === `archive-subtab-${tabName}`);
+  });
+}
+
 function ShipmentCard(invoice) {
   const card = document.createElement("div");
   card.className = "invoice-card";
@@ -296,18 +307,117 @@ function renderArchive() {
   filtered.forEach((row) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td data-label="№ накладной">${row.invoice_number}</td>
-      <td data-label="Создана">${row.creation_date || "-"}</td>
-      <td data-label="Дата накладной">${row.issued_date || "-"}</td>
-      <td data-label="Выдача (план)">${row.estimated_release_date || "-"}</td>
-      <td data-label="Отправитель">${row.shipper_name}</td>
-      <td data-label="Получатель">${row.consignee_name}</td>
-      <td data-label="Строк">${row.items_count}</td>
-      <td data-label="Итог">${moneyTenge(row.total_amount)}</td>
-      <td data-label="Тариф">${row.has_tariff ? "Да" : "Нет"}</td>
+      <td><button type="button" class="archive-link-btn" data-invoice-id="${row.invoice_id}">${row.invoice_number}</button></td>
+      <td>${row.creation_date || "-"}</td>
+      <td>${row.issued_date || "-"}</td>
+      <td>${row.estimated_release_date || "-"}</td>
+      <td>${row.shipper_name}</td>
+      <td>${row.consignee_name}</td>
+      <td>${row.items_count}</td>
+      <td>${moneyTenge(row.total_amount)}</td>
+      <td>${row.has_tariff ? "Да" : "Нет"}</td>
     `;
     body.appendChild(tr);
   });
+}
+
+function renderArchiveWagonsTable() {
+  const body = document.getElementById("archive-wagons-body");
+  body.innerHTML = "";
+
+  const invoicesById = Object.fromEntries(state.invoices.map((x) => [x.invoice_id, x]));
+  const wagonsById = Object.fromEntries(state.wagons.map((x) => [x.wagon_id, x]));
+  const grouped = new Map();
+
+  state.allocations.forEach((alloc) => {
+    const key = `${alloc.wagon_id}::${alloc.invoice_id}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        wagon: wagonsById[alloc.wagon_id] || null,
+        invoice: invoicesById[alloc.invoice_id] || null,
+        allocatedTotal: 0,
+        entries: 0,
+      });
+    }
+    const row = grouped.get(key);
+    row.allocatedTotal += Number(alloc.allocation_value || 0);
+    row.entries += 1;
+  });
+
+  if (!grouped.size) {
+    body.innerHTML = "<tr><td colspan='7'>Пока нет распределений по вагонам</td></tr>";
+    return;
+  }
+
+  [...grouped.values()].forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${row.wagon?.wagon_code || "-"}</td>
+      <td>${row.wagon?.destination || "-"}</td>
+      <td>${row.invoice?.invoice_number || "-"}</td>
+      <td>${row.invoice?.shipper_name || "-"}</td>
+      <td>${row.invoice?.consignee_name || "-"}</td>
+      <td>${row.allocatedTotal.toFixed(2)}</td>
+      <td>${row.entries}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+async function loadArchiveInvoiceDetails(invoiceId) {
+  state.selectedArchiveInvoiceId = invoiceId;
+  const empty = document.getElementById("archive-details-empty");
+  const content = document.getElementById("archive-details-content");
+  const meta = document.getElementById("archive-details-meta");
+  const itemsBody = document.getElementById("archive-details-items");
+
+  try {
+    const payload = await api(`/api/invoices/${invoiceId}`);
+    const invoice = payload.invoice;
+    const items = payload.items || [];
+    const allocations = payload.allocations || [];
+    const wagonsById = Object.fromEntries(state.wagons.map((w) => [w.wagon_id, w]));
+    const directions = new Set(
+      allocations
+        .map((a) => wagonsById[a.wagon_id]?.destination || wagonsById[a.wagon_id]?.wagon_code)
+        .filter(Boolean),
+    );
+
+    meta.innerHTML = `
+      <p class="invoice-meta"><span class="meta-strong">Накладная:</span> № ${invoice.invoice_number}</p>
+      <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
+      <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
+      <p class="invoice-meta"><span class="meta-strong">Куда едет:</span> ${directions.size ? [...directions].join(", ") : "-"}</p>
+      <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
+      <p class="invoice-meta"><span class="meta-strong">План выдачи:</span> ${invoice.estimated_release_date || "-"}</p>
+    `;
+
+    itemsBody.innerHTML = "";
+    if (!items.length) {
+      itemsBody.innerHTML = "<tr><td colspan='8'>В накладной нет позиций</td></tr>";
+    } else {
+      items.forEach((item) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${item.line_no}</td>
+          <td>${item.name}</td>
+          <td>${item.unit}</td>
+          <td>${item.quantity}</td>
+          <td>${item.weight_kg}</td>
+          <td>${item.volume_m3}</td>
+          <td>${item.measure === "weight" ? "Вес" : "Объем"}</td>
+          <td>${moneyTenge(item.line_total || 0)}</td>
+        `;
+        itemsBody.appendChild(tr);
+      });
+    }
+
+    empty.classList.add("hidden");
+    content.classList.remove("hidden");
+    selectArchiveSubtab("details");
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function loadInvoices() {
@@ -316,12 +426,20 @@ async function loadInvoices() {
   renderInvoices();
   fillInvoiceSelects();
   renderArchive();
+  renderArchiveWagonsTable();
 }
 
 async function loadWagons() {
   const payload = await api("/api/wagons");
   state.wagons = payload.wagons || [];
   fillWagonSelect();
+  renderArchiveWagonsTable();
+}
+
+async function loadAllocations() {
+  const payload = await api("/api/allocations");
+  state.allocations = payload.allocations || [];
+  renderArchiveWagonsTable();
 }
 
 function renderPartialItems() {
@@ -408,7 +526,7 @@ function initInvoiceForm() {
       document.getElementById("items-wrap").innerHTML = "";
       addItemRow();
       setDefaultDates();
-      await loadInvoices();
+      await Promise.all([loadInvoices(), loadAllocations()]);
       selectTab("invoices");
     } catch (error) {
       showToast(error.message);
@@ -500,11 +618,25 @@ function initWagonForms() {
       }
       document.getElementById("assignment-result").textContent = msg;
       showToast("Распределение выполнено");
-      await Promise.all([loadInvoices(), loadWagons()]);
+      await Promise.all([loadInvoices(), loadWagons(), loadAllocations()]);
       await loadAssignmentItems();
     } catch (error) {
       showToast(error.message);
     }
+  });
+}
+
+function initArchiveSection() {
+  document.querySelectorAll(".archive-subtab").forEach((button) => {
+    button.addEventListener("click", () => selectArchiveSubtab(button.dataset.archiveTab));
+  });
+
+  document.getElementById("archive-body").addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const invoiceId = target.getAttribute("data-invoice-id");
+    if (!invoiceId) return;
+    loadArchiveInvoiceDetails(invoiceId);
   });
 }
 
@@ -533,11 +665,15 @@ async function bootstrap() {
   initInvoiceForm();
   initTariffForm();
   initWagonForms();
+  initArchiveSection();
   initArchiveFilters();
   setDefaultDates();
 
-  document.getElementById("refresh-invoices").addEventListener("click", loadInvoices);
-  await Promise.all([loadInvoices(), loadWagons()]);
+  document.getElementById("refresh-invoices").addEventListener("click", async () => {
+    await Promise.all([loadInvoices(), loadAllocations()]);
+  });
+
+  await Promise.all([loadInvoices(), loadWagons(), loadAllocations()]);
 }
 
 bootstrap().catch((error) => {
