@@ -1,0 +1,2 @@
+item_id,invoice_id,line_no,name,unit,quantity,weight_kg,volume_m3,measure,unit_price,line_total,created_at,updated_at
+1634375f-86f3-4eec-83ed-ffc70ee2c26b,f3e37b96-b7ea-46e4-9962-df0f3adfbf6d,1,вывывяч,сячя,4,0.03,0.00,weight,112132.00,3363.96,2026-04-27T16:56:45+00:00,2026-04-27T16:57:10+00:00

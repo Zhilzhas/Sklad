@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sklad Mini App</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>Склад Логистика</h1>
+      <p>Накладные, тарифы (в ₸) и распределение по вагонам</p>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="create">Новая накладная</button>
+      <button class="tab" data-tab="invoices">Накладные</button>
+      <button class="tab" data-tab="tariffs">Тарифы</button>
+      <button class="tab" data-tab="wagons">Вагоны</button>
+    </nav>
+
+    <main>
+      <section id="tab-create" class="tab-panel active">
+        <form id="invoice-form">
+          <div class="grid compact-grid">
+            <label>Номер накладной/заявки
+              <input name="invoice_number" required>
+            </label>
+            <label>Дата накладной
+              <input type="date" name="issued_date" required>
+            </label>
+            <label>Грузоотправитель
+              <input name="shipper_name" required>
+            </label>
+            <label>Телефон отправителя
+              <input class="kz-phone" name="shipper_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
+            </label>
+            <label>Грузополучатель
+              <input name="consignee_name" required>
+            </label>
+            <label>Телефон получателя
+              <input class="kz-phone" name="consignee_phone" type="tel" inputmode="numeric" maxlength="12" value="+7" required>
+            </label>
+          </div>
+
+          <div class="items-header">
+            <h2>Позиции груза</h2>
+            <button type="button" id="add-item-btn">+ Строка</button>
+          </div>
+          <div id="items-wrap"></div>
+
+          <p class="hint">PDF формируется только после назначения тарифа для выбранной накладной.</p>
+          <button type="submit" class="primary">Создать накладную</button>
+        </form>
+      </section>
+
+      <section id="tab-invoices" class="tab-panel">
+        <div class="section-actions">
+          <button type="button" id="refresh-invoices">Обновить список</button>
+        </div>
+        <div id="invoices-list"></div>
+      </section>
+
+      <section id="tab-tariffs" class="tab-panel">
+        <form id="tariff-form" class="compact-form">
+          <label>Выберите накладную
+            <select id="tariff-invoice-select" required></select>
+          </label>
+          <label>Цена за 1 кг (₸)
+            <input type="number" step="0.01" min="0" id="price-per-kg" required>
+          </label>
+          <label>Цена за 1 м³ (₸)
+            <input type="number" step="0.01" min="0" id="price-per-m3" required>
+          </label>
+          <button type="submit" class="primary">Применить тариф к выбранной накладной</button>
+        </form>
+        <div id="tariff-result" class="result"></div>
+      </section>
+
+      <section id="tab-wagons" class="tab-panel">
+        <form id="wagon-form" class="compact-form">
+          <h2>Создать/обновить вагон</h2>
+          <label>Номер вагона
+            <input id="wagon-code" required>
+          </label>
+          <label>Назначение (направление)
+            <input id="wagon-destination" placeholder="например, Алматы">
+          </label>
+          <label>Комментарий
+            <input id="wagon-description">
+          </label>
+          <button type="submit">Сохранить вагон</button>
+        </form>
+
+        <form id="assignment-form" class="compact-form">
+          <h2>Распределение всей накладной в вагон</h2>
+          <label>Накладная
+            <select id="assignment-invoice" required></select>
+          </label>
+          <label>Вагон
+            <select id="assignment-wagon" required></select>
+          </label>
+
+          <label>Груз полностью поместился в вагон?
+            <select id="fully-loaded" required>
+              <option value="yes">Да</option>
+              <option value="no">Нет</option>
+            </select>
+          </label>
+
+          <div id="partial-box" class="partial-box hidden">
+            <p>Отметьте позиции и укажите, какое количество (шт.) ушло в этот вагон.</p>
+            <div id="partial-items"></div>
+          </div>
+
+          <button type="submit" class="primary">Сохранить распределение</button>
+        </form>
+
+        <div id="assignment-result" class="result"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
