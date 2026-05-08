@@ -8,6 +8,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
 def _fmt_money_tenge(value: float | str) -> str:
     try:
         return f"{float(value):.2f} ₸"
@@ -28,6 +31,7 @@ def _safe_text(value: object, max_len: int = 60) -> str:
 
 def _register_unicode_font() -> tuple[str, str]:
     regular_candidates = [
+        BASE_DIR / "app" / "fonts" / "NotoSans-Regular.ttf",
         Path("C:/Windows/Fonts/arial.ttf"),
         Path("C:/Windows/Fonts/tahoma.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
@@ -35,6 +39,7 @@ def _register_unicode_font() -> tuple[str, str]:
         Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
     ]
     bold_candidates = [
+        BASE_DIR / "app" / "fonts" / "NotoSans-Bold.ttf",
         Path("C:/Windows/Fonts/arialbd.ttf"),
         Path("C:/Windows/Fonts/tahomabd.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
