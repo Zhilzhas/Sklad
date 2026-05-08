@@ -47,6 +47,5 @@ Inside `data/`:
 ### Vercel notes
 
 - FastAPI entrypoint is `app/app.py` (already added).
-- `vercel.json` includes `static/**` files for the function bundle.
 - Vercel Functions filesystem is read-only except `/tmp`; app is configured to write CSV/PDF into `/tmp/sklad`.
 - `/tmp` is ephemeral, so data is not persistent between cold starts/redeploys.
