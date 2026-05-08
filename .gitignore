@@ -9,3 +9,6 @@ venv/
 # Runtime artifacts
 pdf/*.pdf
 *.log
+
+# Vercel local metadata
+.vercel/

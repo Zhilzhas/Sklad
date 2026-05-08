@@ -34,20 +34,19 @@ Inside `data/`:
 - `wagons.csv`
 - `wagon_allocations.csv`
 
-## Koyeb Deploy (GitHub)
+## Vercel Deploy (GitHub)
 
 1. Push this project to GitHub.
-2. In Koyeb: `Create Web Service` -> `GitHub`.
-3. Select repository and branch.
-4. Builder: `Buildpack`.
-5. Run command: leave default from `Procfile` (already included), or set:
-   `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-6. Port: `8000` (HTTP).
-7. Deploy and copy resulting `https://...koyeb.app` URL.
-8. In `@BotFather`, set this URL as your Mini App URL.
+2. In Vercel: `Add New Project` -> import your GitHub repository.
+3. Framework preset: `Other` (or auto-detected Python/FastAPI).
+4. Root directory: project root.
+5. Deploy.
+6. Copy resulting URL `https://<project>.vercel.app`.
+7. In `@BotFather`, set this URL as your Mini App URL.
 
-## Important for Free Tier
+### Vercel notes
 
-Koyeb free instance is suitable for testing/demo.
-Your current CSV/PDF storage is local; for production use PostgreSQL + object storage.
-
+- FastAPI entrypoint is `app/app.py` (already added).
+- `vercel.json` includes `static/**` files for the function bundle.
+- Vercel Functions filesystem is read-only except `/tmp`; app is configured to write CSV/PDF into `/tmp/sklad`.
+- `/tmp` is ephemeral, so data is not persistent between cold starts/redeploys.

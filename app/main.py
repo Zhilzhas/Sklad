@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
@@ -20,8 +21,13 @@ from app.storage import CsvStore, now_iso
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-PDF_DIR = BASE_DIR / "pdf"
+if os.getenv("VERCEL"):
+    runtime_base = Path("/tmp/sklad")
+    DATA_DIR = Path(os.getenv("DATA_DIR", str(runtime_base / "data")))
+    PDF_DIR = Path(os.getenv("PDF_DIR", str(runtime_base / "pdf")))
+else:
+    DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
+    PDF_DIR = Path(os.getenv("PDF_DIR", str(BASE_DIR / "pdf")))
 STATIC_DIR = BASE_DIR / "static"
 
 store = CsvStore(DATA_DIR)
@@ -134,12 +140,16 @@ def _regenerate_pdf(invoice_id: str) -> str:
     items = _items_by_invoice(invoice_id)
     pdf_path = PDF_DIR / f"invoice_{invoice['invoice_number']}_{invoice['invoice_id']}.pdf"
     generate_invoice_pdf(pdf_path, invoice, items)
+    try:
+        pdf_ref = str(pdf_path.relative_to(BASE_DIR))
+    except ValueError:
+        pdf_ref = str(pdf_path)
     store.update_rows(
         "invoices",
         predicate=lambda row: row["invoice_id"] == invoice_id,
-        updater=lambda row: {**row, "pdf_file": str(pdf_path.relative_to(BASE_DIR))},
+        updater=lambda row: {**row, "pdf_file": pdf_ref},
     )
-    return str(pdf_path.relative_to(BASE_DIR))
+    return pdf_ref
 
 
 def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
@@ -277,7 +287,8 @@ def download_invoice_pdf(invoice_id: str) -> FileResponse:
         invoice = _invoice_or_404(invoice_id)
     if not invoice.get("pdf_file"):
         raise HTTPException(status_code=404, detail="PDF не найден")
-    pdf_path = BASE_DIR / invoice["pdf_file"]
+    pdf_ref = Path(invoice["pdf_file"])
+    pdf_path = pdf_ref if pdf_ref.is_absolute() else (BASE_DIR / pdf_ref)
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF файл не найден")
     return FileResponse(pdf_path, filename=pdf_path.name, media_type="application/pdf")
@@ -493,4 +504,3 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
     if new_invoice_id:
         response["new_invoice"] = _invoice_payload(new_invoice_id)
     return response
-

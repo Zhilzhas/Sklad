@@ -1,2 +1,1 @@
 invoice_id,invoice_number,shipper_name,shipper_phone,consignee_name,consignee_phone,issued_date,tariff_price_per_kg,tariff_price_per_m3,total_amount,pdf_file,created_at,updated_at
-f3e37b96-b7ea-46e4-9962-df0f3adfbf6d,вывыв,Яспер Макглот,+77777777777,Матье Балл,+71111111111,2026-04-27,112132.00,1222.00,3363.96,pdf\invoice_вывыв_f3e37b96-b7ea-46e4-9962-df0f3adfbf6d.pdf,2026-04-27T16:56:45+00:00,2026-04-27T16:57:10+00:00
