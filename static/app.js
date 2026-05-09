@@ -391,11 +391,14 @@ function ShipmentCard(invoice) {
 function renderInvoices() {
   const container = document.getElementById("invoices-list");
   container.innerHTML = "";
-  if (!state.invoices.length) {
-    container.innerHTML = "<p class='status-text'>Накладных пока нет.</p>";
+  const filtered = applyInvoiceFilters(state.invoices);
+  if (!filtered.length) {
+    container.innerHTML = state.invoices.length
+      ? "<p class='status-text'>По выбранным фильтрам ничего не найдено.</p>"
+      : "<p class='status-text'>Накладных пока нет.</p>";
     return;
   }
-  state.invoices.forEach((invoice) => container.appendChild(ShipmentCard(invoice)));
+  filtered.forEach((invoice) => container.appendChild(ShipmentCard(invoice)));
 }
 
 function fillInvoiceSelects() {
@@ -436,6 +439,26 @@ function applyArchiveFilters(source) {
 
   return source.filter((row) => {
     if (invoiceNumber && !row.invoice_number.toLowerCase().includes(invoiceNumber)) return false;
+    if (shipper && !row.shipper_name.toLowerCase().includes(shipper)) return false;
+    if (consignee && !row.consignee_name.toLowerCase().includes(consignee)) return false;
+    if (createdFrom && (row.creation_date || "") < createdFrom) return false;
+    if (createdTo && (row.creation_date || "") > createdTo) return false;
+    if (hasTariff === "yes" && !row.has_tariff) return false;
+    if (hasTariff === "no" && row.has_tariff) return false;
+    return true;
+  });
+}
+
+function applyInvoiceFilters(source) {
+  const number = document.getElementById("inv-f-number").value.trim().toLowerCase();
+  const shipper = document.getElementById("inv-f-shipper").value.trim().toLowerCase();
+  const consignee = document.getElementById("inv-f-consignee").value.trim().toLowerCase();
+  const createdFrom = document.getElementById("inv-f-created-from").value;
+  const createdTo = document.getElementById("inv-f-created-to").value;
+  const hasTariff = document.getElementById("inv-f-has-tariff").value;
+
+  return source.filter((row) => {
+    if (number && !row.invoice_number.toLowerCase().includes(number)) return false;
     if (shipper && !row.shipper_name.toLowerCase().includes(shipper)) return false;
     if (consignee && !row.consignee_name.toLowerCase().includes(consignee)) return false;
     if (createdFrom && (row.creation_date || "") < createdFrom) return false;
@@ -980,6 +1003,24 @@ function initArchiveFilters() {
   });
 }
 
+function initInvoiceFilters() {
+  [
+    "inv-f-number",
+    "inv-f-shipper",
+    "inv-f-consignee",
+    "inv-f-created-from",
+    "inv-f-created-to",
+    "inv-f-has-tariff",
+  ].forEach((id) => {
+    document.getElementById(id).addEventListener("input", renderInvoices);
+    document.getElementById(id).addEventListener("change", renderInvoices);
+  });
+  document.getElementById("clear-invoice-filters").addEventListener("click", () => {
+    document.getElementById("invoices-filter-form").reset();
+    renderInvoices();
+  });
+}
+
 function initAdminSection() {
   document.getElementById("admin-user-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1100,6 +1141,7 @@ async function bootstrap() {
   initWagonForms();
   initArchiveSection();
   initArchiveFilters();
+  initInvoiceFilters();
   initAdminSection();
   initLoginForm();
   document.getElementById("logout-btn").addEventListener("click", () => {

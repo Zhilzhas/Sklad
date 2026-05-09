@@ -117,6 +117,39 @@
             <h2 class="section-title">Список накладных</h2>
             <button type="button" id="refresh-invoices" class="btn btn-secondary">Обновить список</button>
           </div>
+          <form id="invoices-filter-form" class="form-grid form-grid-filters">
+            <label class="form-field">
+              <span class="field-label">Номер накладной</span>
+              <input id="inv-f-number" placeholder="Поиск по номеру">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Отправитель</span>
+              <input id="inv-f-shipper" placeholder="Поиск по отправителю">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Получатель</span>
+              <input id="inv-f-consignee" placeholder="Поиск по получателю">
+            </label>
+            <label class="form-field">
+              <span class="field-label">С даты создания</span>
+              <input type="date" id="inv-f-created-from">
+            </label>
+            <label class="form-field">
+              <span class="field-label">По дату создания</span>
+              <input type="date" id="inv-f-created-to">
+            </label>
+            <label class="form-field">
+              <span class="field-label">Тариф</span>
+              <select id="inv-f-has-tariff">
+                <option value="">Все</option>
+                <option value="yes">Только с тарифом</option>
+                <option value="no">Только без тарифа</option>
+              </select>
+            </label>
+          </form>
+          <div class="action-row">
+            <button type="button" id="clear-invoice-filters" class="btn btn-secondary">Сбросить фильтры</button>
+          </div>
           <div id="invoices-list" class="stack-md"></div>
         </article>
       </section>
