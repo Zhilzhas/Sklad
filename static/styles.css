@@ -60,6 +60,20 @@ body {
   margin-bottom: 14px;
 }
 
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.user-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
 .app-title {
   margin: 0 0 6px;
   font-size: 25px;

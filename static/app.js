@@ -44,6 +44,22 @@ function tokenClear() {
   localStorage.removeItem("sklad_token");
 }
 
+function setCurrentUserLabel() {
+  const label = document.getElementById("current-user-label");
+  const logoutBtn = document.getElementById("logout-btn");
+  if (!label || !logoutBtn) return;
+  if (!state.user) {
+    label.textContent = "";
+    label.classList.add("hidden");
+    logoutBtn.classList.add("hidden");
+    return;
+  }
+  const roleText = state.user.role === "admin" ? "админ" : "пользователь";
+  label.textContent = `${state.user.login} (${roleText})`;
+  label.classList.remove("hidden");
+  logoutBtn.classList.remove("hidden");
+}
+
 async function api(path, options = {}, opts = {}) {
   const headers = { ...(options.headers || {}) };
   if (!opts.noAuth) {
@@ -1011,11 +1027,13 @@ function initTelegramWebApp() {
 function showAuthScreen() {
   document.getElementById("login-screen").classList.remove("hidden");
   document.querySelector(".app-shell").classList.add("hidden");
+  setCurrentUserLabel();
 }
 
 function showAppScreen() {
   document.getElementById("login-screen").classList.add("hidden");
   document.querySelector(".app-shell").classList.remove("hidden");
+  setCurrentUserLabel();
 }
 
 function initLoginForm() {
@@ -1038,6 +1056,7 @@ function initLoginForm() {
       tokenSet(payload.token);
       state.user = payload.user;
       applyRoleUi();
+      setCurrentUserLabel();
       showAppScreen();
       await bootstrapData();
       showToast(`Вы вошли как ${state.user.login}`);
@@ -1061,6 +1080,7 @@ async function restoreSession() {
     const payload = await api("/api/auth/me");
     state.user = payload.user;
     applyRoleUi();
+    setCurrentUserLabel();
     showAppScreen();
     await bootstrapData();
     return true;
@@ -1082,6 +1102,19 @@ async function bootstrap() {
   initArchiveFilters();
   initAdminSection();
   initLoginForm();
+  document.getElementById("logout-btn").addEventListener("click", () => {
+    tokenClear();
+    state.user = null;
+    state.editingInvoiceId = "";
+    state.invoices = [];
+    state.wagons = [];
+    state.allocations = [];
+    state.assignmentItems = [];
+    state.itemTemplates = [];
+    state.users = [];
+    setCurrentUserLabel();
+    showAuthScreen();
+  });
   setDefaultDates();
   setInvoiceFormMode();
 
