@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 MeasureType = Literal["weight", "volume"]
 AllocationMeasureType = Literal["quantity", "weight", "volume"]
+UserRole = Literal["admin", "user"]
 KZ_PHONE_PATTERN = r"^\+7\d{10}$"
 
 
@@ -30,6 +31,16 @@ class InvoiceItemCreate(BaseModel):
 
 class InvoiceCreate(BaseModel):
     invoice_number: str | None = Field(default=None, min_length=1, max_length=100)
+    shipper_name: str = Field(min_length=1, max_length=200)
+    shipper_phone: str = Field(pattern=KZ_PHONE_PATTERN)
+    consignee_name: str = Field(min_length=1, max_length=200)
+    consignee_phone: str = Field(pattern=KZ_PHONE_PATTERN)
+    creation_date: date
+    issued_date: date
+    items: list[InvoiceItemCreate] = Field(min_length=1)
+
+
+class InvoiceUpdate(BaseModel):
     shipper_name: str = Field(min_length=1, max_length=200)
     shipper_phone: str = Field(pattern=KZ_PHONE_PATTERN)
     consignee_name: str = Field(min_length=1, max_length=200)
@@ -75,3 +86,18 @@ class WagonAssignRequest(BaseModel):
         if not self.fully_loaded and not self.items:
             raise ValueError("When fully_loaded is false, items must be provided")
         return self
+
+
+class LoginRequest(BaseModel):
+    login: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=100)
+
+
+class UserCreate(BaseModel):
+    login: str = Field(min_length=3, max_length=100)
+    password: str = Field(min_length=3, max_length=100)
+    role: UserRole
+
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole

@@ -4,22 +4,61 @@ const state = {
   allocations: [],
   assignmentItems: [],
   itemTemplates: [],
+  users: [],
   selectedArchiveInvoiceId: "",
+  editingInvoiceId: "",
+  user: null,
+  submittingInvoice: false,
 };
 
 const toast = document.getElementById("toast");
 
 function showToast(text) {
+  if (!toast) return;
   toast.textContent = text;
   toast.classList.add("show");
   setTimeout(() => toast.classList.remove("show"), 2500);
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+function moneyTenge(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return "0.00 ₸";
+  return `${num.toFixed(2)} ₸`;
+}
+
+function number2(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return "0.00";
+  return num.toFixed(2);
+}
+
+function tokenGet() {
+  return localStorage.getItem("sklad_token") || "";
+}
+
+function tokenSet(token) {
+  localStorage.setItem("sklad_token", token);
+}
+
+function tokenClear() {
+  localStorage.removeItem("sklad_token");
+}
+
+async function api(path, options = {}, opts = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (!opts.noAuth) {
+    const token = tokenGet();
+    if (!token) throw new Error("Требуется вход в систему");
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (opts.idempotencyKey) {
+    headers["X-Idempotency-Key"] = opts.idempotencyKey;
+  }
+  if (!headers["Content-Type"] && options.body) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     let detail = "Ошибка запроса";
     try {
@@ -28,15 +67,13 @@ async function api(path, options = {}) {
     } catch (_) {
       detail = response.statusText || detail;
     }
+    if (response.status === 401) {
+      tokenClear();
+      showAuthScreen();
+    }
     throw new Error(detail);
   }
   return response.json();
-}
-
-function moneyTenge(value) {
-  const num = Number(value || 0);
-  if (!Number.isFinite(num)) return "0.00 ₸";
-  return `${num.toFixed(2)} ₸`;
 }
 
 function normalizeKzPhone(rawValue) {
@@ -68,9 +105,9 @@ function setDefaultDates() {
   const creationDate = document.querySelector("[name='creation_date']");
   const issuedDate = document.querySelector("[name='issued_date']");
   const estReleaseDate = document.getElementById("estimated-release-date");
-  if (!creationDate.value) creationDate.value = today;
-  if (!issuedDate.value) issuedDate.value = today;
-  if (!estReleaseDate.value) estReleaseDate.value = today;
+  if (creationDate && !creationDate.value) creationDate.value = today;
+  if (issuedDate && !issuedDate.value) issuedDate.value = today;
+  if (estReleaseDate && !estReleaseDate.value) estReleaseDate.value = today;
 }
 
 function applyItemNameOptions() {
@@ -112,7 +149,7 @@ function toggleMeasureRequirements(row) {
   }
 }
 
-function CargoPositionCard(index) {
+function CargoPositionCard(index, data = null) {
   const row = document.createElement("div");
   row.className = "item-row";
   row.innerHTML = `
@@ -164,6 +201,16 @@ function CargoPositionCard(index) {
     const tpl = templateByName(event.target.value);
     if (tpl) applyTemplateToRow(row, tpl);
   });
+
+  if (data) {
+    row.querySelector("[data-field='name']").value = data.name || "";
+    row.querySelector("[data-field='unit']").value = data.unit || "";
+    row.querySelector("[data-field='quantity']").value = data.quantity || "";
+    row.querySelector("[data-field='weight_kg']").value = data.weight_kg || "";
+    row.querySelector("[data-field='volume_m3']").value = data.volume_m3 || "";
+    row.querySelector("[data-field='measure']").value = data.measure || "weight";
+  }
+
   toggleMeasureRequirements(row);
   return row;
 }
@@ -174,9 +221,15 @@ function reindexItemRows() {
   });
 }
 
-function addItemRow() {
+function addItemRow({ atTop = true, data = null } = {}) {
   const wrap = document.getElementById("items-wrap");
-  wrap.appendChild(CargoPositionCard(wrap.querySelectorAll(".item-row").length + 1));
+  const row = CargoPositionCard(1, data);
+  if (atTop) {
+    wrap.prepend(row);
+  } else {
+    wrap.appendChild(row);
+  }
+  reindexItemRows();
 }
 
 function gatherInvoicePayload() {
@@ -197,15 +250,48 @@ function gatherInvoicePayload() {
     invoice_number: formData.get("invoice_number"),
     creation_date: formData.get("creation_date"),
     issued_date: formData.get("issued_date"),
-    shipper_name: formData.get("shipper_name").trim(),
+    shipper_name: String(formData.get("shipper_name") || "").trim(),
     shipper_phone: normalizeKzPhone(formData.get("shipper_phone")),
-    consignee_name: formData.get("consignee_name").trim(),
+    consignee_name: String(formData.get("consignee_name") || "").trim(),
     consignee_phone: normalizeKzPhone(formData.get("consignee_phone")),
     items,
   };
 }
 
+function generateIdempotencyKey() {
+  if (window.crypto && window.crypto.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `inv-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function setInvoiceFormMode() {
+  const submitBtn = document.querySelector("#invoice-form button[type='submit']");
+  const cancelBtn = document.getElementById("cancel-edit-btn");
+  if (state.editingInvoiceId) {
+    submitBtn.textContent = "Сохранить изменения";
+    cancelBtn.classList.remove("hidden");
+  } else {
+    submitBtn.textContent = "Создать накладную";
+    cancelBtn.classList.add("hidden");
+  }
+}
+
+function resetInvoiceFormToCreate() {
+  state.editingInvoiceId = "";
+  const form = document.getElementById("invoice-form");
+  form.reset();
+  document.querySelectorAll(".kz-phone").forEach((input) => {
+    input.value = "+7";
+  });
+  document.getElementById("items-wrap").innerHTML = "";
+  addItemRow({ atTop: true });
+  setDefaultDates();
+  setInvoiceFormMode();
+}
+
 function selectTab(tabName) {
+  if (tabName === "admin" && state.user?.role !== "admin") return;
   document.querySelectorAll(".bottom-tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.tab === tabName);
   });
@@ -236,17 +322,27 @@ function ShipmentCard(invoice) {
     ? `<span class="badge badge-accent">Выдача: ${invoice.estimated_release_date}</span>`
     : `<span class="badge badge-muted">Вагон не назначен</span>`;
 
+  const adminActions =
+    state.user?.role === "admin"
+      ? `
+      <button type="button" class="btn btn-secondary" data-action="edit">Редактировать</button>
+      <button type="button" class="btn btn-ghost" data-action="delete">Удалить</button>
+    `
+      : "";
+
   card.innerHTML = `
     <h3 class="invoice-title">Накладная № ${invoice.invoice_number}</h3>
     <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
     <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
     <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
-    <p class="invoice-meta"><span class="meta-strong">Строк:</span> ${invoice.items_count} | <span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
+    <p class="invoice-meta"><span class="meta-strong">Строк:</span> ${invoice.items_count} | <span class="meta-strong">Кол-во:</span> ${invoice.total_quantity} | <span class="meta-strong">Вес:</span> ${number2(invoice.total_weight_kg)} кг | <span class="meta-strong">Объем:</span> ${number2(invoice.total_volume_m3)} м³</p>
+    <p class="invoice-meta"><span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
     <div class="badge-row">${tariffBadge}${pdfBadge}${wagonBadge}</div>
     <div class="row-actions">
       <button type="button" class="btn btn-secondary" data-action="tariff">Тариф</button>
       <button type="button" class="btn btn-secondary" data-action="wagon">Вагон</button>
       <button type="button" class="btn btn-primary" data-action="pdf">PDF</button>
+      ${adminActions}
     </div>
   `;
 
@@ -265,8 +361,14 @@ function ShipmentCard(invoice) {
       showToast("PDF доступен только после назначения тарифа");
       return;
     }
-    window.open(`/api/invoices/${invoice.invoice_id}/pdf`, "_blank");
+    const token = encodeURIComponent(tokenGet());
+    window.open(`/api/invoices/${invoice.invoice_id}/pdf?token=${token}`, "_blank");
   });
+
+  if (state.user?.role === "admin") {
+    card.querySelector("[data-action='edit']").addEventListener("click", () => startInvoiceEdit(invoice.invoice_id));
+    card.querySelector("[data-action='delete']").addEventListener("click", () => deleteInvoice(invoice.invoice_id));
+  }
   return card;
 }
 
@@ -281,10 +383,7 @@ function renderInvoices() {
 }
 
 function fillInvoiceSelects() {
-  const selects = [
-    document.getElementById("tariff-invoice-select"),
-    document.getElementById("assignment-invoice"),
-  ];
+  const selects = [document.getElementById("tariff-invoice-select"), document.getElementById("assignment-invoice")];
   selects.forEach((select) => {
     const prev = select.value;
     select.innerHTML = "<option value=''>Выберите накладную</option>";
@@ -335,25 +434,47 @@ function renderArchive() {
   const body = document.getElementById("archive-body");
   body.innerHTML = "";
   const filtered = applyArchiveFilters(state.invoices);
+
+  let totalLines = 0;
+  let totalQty = 0;
+  let totalWeight = 0;
+  let totalVolume = 0;
+  let totalMoney = 0;
+
   if (!filtered.length) {
-    body.innerHTML = "<tr><td colspan='9'>Нет данных по выбранным фильтрам</td></tr>";
-    return;
+    body.innerHTML = "<tr><td colspan='12'>Нет данных по выбранным фильтрам</td></tr>";
+  } else {
+    filtered.forEach((row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><button type="button" class="archive-link-btn" data-invoice-id="${row.invoice_id}">${row.invoice_number}</button></td>
+        <td>${row.creation_date || "-"}</td>
+        <td>${row.issued_date || "-"}</td>
+        <td>${row.estimated_release_date || "-"}</td>
+        <td>${row.shipper_name}</td>
+        <td>${row.consignee_name}</td>
+        <td>${row.items_count}</td>
+        <td>${row.total_quantity}</td>
+        <td>${number2(row.total_weight_kg)}</td>
+        <td>${number2(row.total_volume_m3)}</td>
+        <td>${moneyTenge(row.total_amount)}</td>
+        <td>${row.has_tariff ? "Да" : "Нет"}</td>
+      `;
+      body.appendChild(tr);
+
+      totalLines += Number(row.items_count || 0);
+      totalQty += Number(row.total_quantity || 0);
+      totalWeight += Number(row.total_weight_kg || 0);
+      totalVolume += Number(row.total_volume_m3 || 0);
+      totalMoney += Number(row.total_amount || 0);
+    });
   }
-  filtered.forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><button type="button" class="archive-link-btn" data-invoice-id="${row.invoice_id}">${row.invoice_number}</button></td>
-      <td>${row.creation_date || "-"}</td>
-      <td>${row.issued_date || "-"}</td>
-      <td>${row.estimated_release_date || "-"}</td>
-      <td>${row.shipper_name}</td>
-      <td>${row.consignee_name}</td>
-      <td>${row.items_count}</td>
-      <td>${moneyTenge(row.total_amount)}</td>
-      <td>${row.has_tariff ? "Да" : "Нет"}</td>
-    `;
-    body.appendChild(tr);
-  });
+
+  document.getElementById("archive-total-lines").textContent = String(totalLines);
+  document.getElementById("archive-total-qty").textContent = String(totalQty);
+  document.getElementById("archive-total-weight").textContent = number2(totalWeight);
+  document.getElementById("archive-total-volume").textContent = number2(totalVolume);
+  document.getElementById("archive-total-money").textContent = moneyTenge(totalMoney);
 }
 
 function renderArchiveWagonsTable() {
@@ -379,24 +500,31 @@ function renderArchiveWagonsTable() {
     row.entries += 1;
   });
 
+  let totalAllocated = 0;
+  let totalEntries = 0;
+
   if (!grouped.size) {
     body.innerHTML = "<tr><td colspan='7'>Пока нет распределений по вагонам</td></tr>";
-    return;
+  } else {
+    [...grouped.values()].forEach((row) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.wagon?.wagon_code || "-"}</td>
+        <td>${row.wagon?.destination || "-"}</td>
+        <td>${row.invoice?.invoice_number || "-"}</td>
+        <td>${row.invoice?.shipper_name || "-"}</td>
+        <td>${row.invoice?.consignee_name || "-"}</td>
+        <td>${number2(row.allocatedTotal)}</td>
+        <td>${row.entries}</td>
+      `;
+      body.appendChild(tr);
+      totalAllocated += row.allocatedTotal;
+      totalEntries += row.entries;
+    });
   }
 
-  [...grouped.values()].forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${row.wagon?.wagon_code || "-"}</td>
-      <td>${row.wagon?.destination || "-"}</td>
-      <td>${row.invoice?.invoice_number || "-"}</td>
-      <td>${row.invoice?.shipper_name || "-"}</td>
-      <td>${row.invoice?.consignee_name || "-"}</td>
-      <td>${row.allocatedTotal.toFixed(2)}</td>
-      <td>${row.entries}</td>
-    `;
-    body.appendChild(tr);
-  });
+  document.getElementById("archive-wagons-total-allocated").textContent = number2(totalAllocated);
+  document.getElementById("archive-wagons-total-entries").textContent = String(totalEntries);
 }
 
 async function loadArchiveInvoiceDetails(invoiceId) {
@@ -430,6 +558,12 @@ async function loadArchiveInvoiceDetails(invoiceId) {
     `;
 
     itemsBody.innerHTML = "";
+
+    let totalQty = 0;
+    let totalWeight = 0;
+    let totalVolume = 0;
+    let totalMoney = 0;
+
     if (!items.length) {
       itemsBody.innerHTML = "<tr><td colspan='9'>В накладной нет позиций</td></tr>";
     } else {
@@ -447,8 +581,18 @@ async function loadArchiveInvoiceDetails(invoiceId) {
           <td>${moneyTenge(item.line_total || 0)}</td>
         `;
         itemsBody.appendChild(tr);
+
+        totalQty += Number(item.quantity || 0);
+        totalWeight += Number(item.weight_kg || 0);
+        totalVolume += Number(item.volume_m3 || 0);
+        totalMoney += Number(item.line_total || 0);
       });
     }
+
+    document.getElementById("details-total-qty").textContent = String(totalQty);
+    document.getElementById("details-total-weight").textContent = number2(totalWeight);
+    document.getElementById("details-total-volume").textContent = number2(totalVolume);
+    document.getElementById("details-total-money").textContent = moneyTenge(totalMoney);
 
     empty.classList.add("hidden");
     content.classList.remove("hidden");
@@ -484,7 +628,7 @@ async function loadNextNumbers() {
   const payload = await api("/api/next-numbers");
   const invoiceInput = document.getElementById("invoice-number");
   const wagonInput = document.getElementById("wagon-code");
-  if (invoiceInput) invoiceInput.value = payload.next_invoice_number || "";
+  if (invoiceInput && !state.editingInvoiceId) invoiceInput.value = payload.next_invoice_number || "";
   if (wagonInput) wagonInput.value = payload.next_wagon_code || "";
 }
 
@@ -492,6 +636,57 @@ async function loadItemTemplates() {
   const payload = await api("/api/item-templates");
   state.itemTemplates = payload.templates || [];
   applyItemNameOptions();
+}
+
+async function loadUsers() {
+  if (state.user?.role !== "admin") return;
+  const payload = await api("/api/admin/users");
+  state.users = payload.users || [];
+  renderUsers();
+}
+
+function renderUsers() {
+  const body = document.getElementById("admin-users-body");
+  body.innerHTML = "";
+  if (!state.users.length) {
+    body.innerHTML = "<tr><td colspan='3'>Пользователи не найдены</td></tr>";
+    return;
+  }
+
+  state.users.forEach((user) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${user.login}</td>
+      <td>${user.role === "admin" ? "Админ" : "Пользователь"}</td>
+      <td>
+        <div class="action-row">
+          <select data-role-select="${user.user_id}">
+            <option value="user" ${user.role === "user" ? "selected" : ""}>Пользователь</option>
+            <option value="admin" ${user.role === "admin" ? "selected" : ""}>Админ</option>
+          </select>
+          <button type="button" class="btn btn-secondary" data-role-save="${user.user_id}">Сохранить</button>
+        </div>
+      </td>
+    `;
+    body.appendChild(tr);
+  });
+
+  body.querySelectorAll("[data-role-save]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.getAttribute("data-role-save");
+      const select = body.querySelector(`[data-role-select='${userId}']`);
+      try {
+        await api(`/api/admin/users/${userId}/role`, {
+          method: "PATCH",
+          body: JSON.stringify({ role: select.value }),
+        });
+        showToast("Роль обновлена");
+        await loadUsers();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  });
 }
 
 function renderPartialItems() {
@@ -534,10 +729,7 @@ async function loadAssignmentItems() {
 }
 
 function togglePartialBox() {
-  document.getElementById("partial-box").classList.toggle(
-    "hidden",
-    document.getElementById("fully-loaded").value === "yes",
-  );
+  document.getElementById("partial-box").classList.toggle("hidden", document.getElementById("fully-loaded").value === "yes");
 }
 
 function collectPartialMovedItems() {
@@ -550,6 +742,50 @@ function collectPartialMovedItems() {
   return selected;
 }
 
+async function startInvoiceEdit(invoiceId) {
+  if (state.user?.role !== "admin") return;
+  try {
+    const payload = await api(`/api/invoices/${invoiceId}`);
+    const invoice = payload.invoice;
+    const items = payload.items || [];
+
+    state.editingInvoiceId = invoiceId;
+    document.getElementById("invoice-number").value = invoice.invoice_number || "";
+    document.querySelector("[name='creation_date']").value = invoice.creation_date || "";
+    document.querySelector("[name='issued_date']").value = invoice.issued_date || "";
+    document.querySelector("[name='shipper_name']").value = invoice.shipper_name || "";
+    document.querySelector("[name='shipper_phone']").value = invoice.shipper_phone || "+7";
+    document.querySelector("[name='consignee_name']").value = invoice.consignee_name || "";
+    document.querySelector("[name='consignee_phone']").value = invoice.consignee_phone || "+7";
+
+    const wrap = document.getElementById("items-wrap");
+    wrap.innerHTML = "";
+    items.forEach((item) => addItemRow({ atTop: false, data: item }));
+    if (!items.length) addItemRow({ atTop: true });
+
+    setInvoiceFormMode();
+    selectTab("create");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function deleteInvoice(invoiceId) {
+  if (state.user?.role !== "admin") return;
+  if (!window.confirm("Удалить накладную? Это действие необратимо.")) return;
+  try {
+    await api(`/api/invoices/${invoiceId}`, { method: "DELETE" });
+    showToast("Накладная удалена");
+    if (state.editingInvoiceId === invoiceId) {
+      resetInvoiceFormToCreate();
+      await loadNextNumbers();
+    }
+    await Promise.all([loadInvoices(), loadAllocations(), loadItemTemplates(), loadNextNumbers()]);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function initTabs() {
   document.querySelectorAll(".bottom-tab").forEach((button) => {
     button.addEventListener("click", () => selectTab(button.dataset.tab));
@@ -557,31 +793,57 @@ function initTabs() {
 }
 
 function initInvoiceForm() {
-  document.getElementById("add-item-btn").addEventListener("click", addItemRow);
-  addItemRow();
+  document.getElementById("add-item-btn").addEventListener("click", () => addItemRow({ atTop: true }));
+  addItemRow({ atTop: true });
+
+  document.getElementById("cancel-edit-btn").addEventListener("click", async () => {
+    resetInvoiceFormToCreate();
+    await loadNextNumbers();
+  });
 
   document.getElementById("invoice-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (state.submittingInvoice) return;
     if (!event.target.reportValidity()) return;
+
+    const submitBtn = event.target.querySelector("button[type='submit']");
+    const originalText = submitBtn.textContent;
+    state.submittingInvoice = true;
+    submitBtn.disabled = true;
+    submitBtn.textContent = state.editingInvoiceId ? "Сохраняем..." : "Создаем...";
+
     try {
       const payload = gatherInvoicePayload();
       if (!payload.items.length) {
         showToast("Добавьте хотя бы одну позицию");
         return;
       }
-      await api("/api/invoices", { method: "POST", body: JSON.stringify(payload) });
-      showToast("Накладная создана");
-      event.target.reset();
-      document.querySelectorAll(".kz-phone").forEach((input) => {
-        input.value = "+7";
-      });
-      document.getElementById("items-wrap").innerHTML = "";
-      addItemRow();
-      setDefaultDates();
+
+      if (state.editingInvoiceId) {
+        await api(`/api/invoices/${state.editingInvoiceId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        showToast("Накладная обновлена");
+      } else {
+        await api(
+          "/api/invoices",
+          { method: "POST", body: JSON.stringify(payload) },
+          { idempotencyKey: generateIdempotencyKey() },
+        );
+        showToast("Накладная создана");
+      }
+
+      resetInvoiceFormToCreate();
       await Promise.all([loadInvoices(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
       selectTab("invoices");
     } catch (error) {
       showToast(error.message);
+    } finally {
+      state.submittingInvoice = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+      setInvoiceFormMode();
     }
   });
 }
@@ -602,8 +864,7 @@ function initTariffForm() {
           price_per_m3: Number(document.getElementById("price-per-m3").value),
         }),
       });
-      document.getElementById("tariff-result").textContent =
-        `Тариф назначен для накладной № ${payload.invoice.invoice_number}. Итог: ${moneyTenge(payload.invoice.total_amount)}.`;
+      document.getElementById("tariff-result").textContent = `Тариф назначен для накладной № ${payload.invoice.invoice_number}. Итог: ${moneyTenge(payload.invoice.total_amount)}.`;
       showToast("Тариф применен");
       await loadInvoices();
     } catch (error) {
@@ -703,10 +964,110 @@ function initArchiveFilters() {
   });
 }
 
+function initAdminSection() {
+  document.getElementById("admin-user-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          login: document.getElementById("admin-new-login").value.trim(),
+          password: document.getElementById("admin-new-password").value,
+          role: document.getElementById("admin-new-role").value,
+        }),
+      });
+      showToast("Пользователь создан");
+      event.target.reset();
+      await loadUsers();
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+}
+
+function applyRoleUi() {
+  const isAdmin = state.user?.role === "admin";
+  const navAdmin = document.getElementById("nav-admin");
+  const tabAdmin = document.getElementById("tab-admin");
+  if (isAdmin) {
+    navAdmin.classList.remove("hidden");
+    tabAdmin.classList.remove("hidden");
+  } else {
+    navAdmin.classList.add("hidden");
+    tabAdmin.classList.add("hidden");
+    if (tabAdmin.classList.contains("active")) {
+      selectTab("create");
+    }
+  }
+}
+
 function initTelegramWebApp() {
   if (window.Telegram && window.Telegram.WebApp) {
     window.Telegram.WebApp.ready();
     window.Telegram.WebApp.expand();
+  }
+}
+
+function showAuthScreen() {
+  document.getElementById("login-screen").classList.remove("hidden");
+  document.querySelector(".app-shell").classList.add("hidden");
+}
+
+function showAppScreen() {
+  document.getElementById("login-screen").classList.add("hidden");
+  document.querySelector(".app-shell").classList.remove("hidden");
+}
+
+function initLoginForm() {
+  document.getElementById("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const errorBox = document.getElementById("login-error");
+    errorBox.textContent = "";
+    try {
+      const payload = await api(
+        "/api/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            login: document.getElementById("login-name").value.trim(),
+            password: document.getElementById("login-password").value,
+          }),
+        },
+        { noAuth: true },
+      );
+      tokenSet(payload.token);
+      state.user = payload.user;
+      applyRoleUi();
+      showAppScreen();
+      await bootstrapData();
+      showToast(`Вы вошли как ${state.user.login}`);
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+  });
+}
+
+async function bootstrapData() {
+  await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
+  if (state.user?.role === "admin") {
+    await loadUsers();
+  }
+}
+
+async function restoreSession() {
+  const token = tokenGet();
+  if (!token) return false;
+  try {
+    const payload = await api("/api/auth/me");
+    state.user = payload.user;
+    applyRoleUi();
+    showAppScreen();
+    await bootstrapData();
+    return true;
+  } catch (_) {
+    tokenClear();
+    state.user = null;
+    return false;
   }
 }
 
@@ -719,13 +1080,20 @@ async function bootstrap() {
   initWagonForms();
   initArchiveSection();
   initArchiveFilters();
+  initAdminSection();
+  initLoginForm();
   setDefaultDates();
+  setInvoiceFormMode();
 
   document.getElementById("refresh-invoices").addEventListener("click", async () => {
     await Promise.all([loadInvoices(), loadAllocations(), loadItemTemplates()]);
   });
 
-  await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
+  showAuthScreen();
+  const restored = await restoreSession();
+  if (!restored) {
+    showAuthScreen();
+  }
 }
 
 bootstrap().catch((error) => {

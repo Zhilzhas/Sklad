@@ -29,6 +29,19 @@ body {
   font-family: "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 16px;
+}
+
 .app-shell {
   width: min(940px, 100%);
   margin: 0 auto;
@@ -70,7 +83,7 @@ body {
   transform: translateX(-50%);
   width: min(940px, calc(100% - 16px));
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
   padding: 8px;
   background: rgba(255, 255, 255, 0.92);
@@ -444,6 +457,13 @@ input[type="checkbox"] {
   vertical-align: top;
 }
 
+.archive-table tfoot th,
+.archive-table tfoot td {
+  background: #fffdf8;
+  font-weight: 800;
+  color: #6d4c31;
+}
+
 .archive-link-btn {
   border: none;
   background: transparent;
@@ -484,7 +504,7 @@ input[type="checkbox"] {
 
 @media (max-width: 820px) {
   .bottom-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     width: calc(100% - 10px);
     bottom: 6px;
     padding: 6px;
@@ -530,5 +550,11 @@ input[type="checkbox"] {
 
   .archive-table {
     min-width: 720px;
+  }
+}
+
+@media (max-width: 560px) {
+  .bottom-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

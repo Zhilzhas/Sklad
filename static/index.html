@@ -8,7 +8,24 @@
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-  <div class="app-shell">
+  <div id="login-screen" class="auth-shell">
+    <form id="login-form" class="auth-card card stack-md">
+      <h2 class="section-title">Вход в систему</h2>
+      <p class="section-hint">Введите логин и пароль для доступа к складу</p>
+      <label class="form-field">
+        <span class="field-label">Логин</span>
+        <input id="login-name" autocomplete="username" required>
+      </label>
+      <label class="form-field">
+        <span class="field-label">Пароль</span>
+        <input id="login-password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn btn-primary btn-wide">Войти</button>
+      <div id="login-error" class="status-text"></div>
+    </form>
+  </div>
+
+  <div class="app-shell hidden">
     <header class="app-header card">
       <h1 class="app-title">Прием и управление складом</h1>
       <p class="app-subtitle">Накладные, тарифы (₸), вагоны и архив</p>
@@ -61,6 +78,7 @@
           </article>
 
           <div class="action-row">
+            <button type="button" id="cancel-edit-btn" class="btn btn-secondary hidden">Отменить редактирование</button>
             <button type="submit" class="btn btn-primary btn-wide">Создать накладную</button>
           </div>
         </form>
@@ -216,11 +234,26 @@
                     <th>Отправитель</th>
                     <th>Получатель</th>
                     <th>Строк</th>
+                    <th>Кол-во</th>
+                    <th>Вес, кг</th>
+                    <th>Объем, м³</th>
                     <th>Итог, ₸</th>
                     <th>Тариф</th>
                   </tr>
                 </thead>
                 <tbody id="archive-body"></tbody>
+                <tfoot>
+                  <tr id="archive-totals-row">
+                    <th>ИТОГО</th>
+                    <th colspan="5">-</th>
+                    <th id="archive-total-lines">0</th>
+                    <th id="archive-total-qty">0</th>
+                    <th id="archive-total-weight">0.00</th>
+                    <th id="archive-total-volume">0.00</th>
+                    <th id="archive-total-money">0.00 ₸</th>
+                    <th>-</th>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </article>
@@ -243,6 +276,13 @@
                   </tr>
                 </thead>
                 <tbody id="archive-wagons-body"></tbody>
+                <tfoot>
+                  <tr>
+                    <th colspan="5">ИТОГО</th>
+                    <th id="archive-wagons-total-allocated">0.00</th>
+                    <th id="archive-wagons-total-entries">0</th>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </article>
@@ -270,11 +310,64 @@
                     </tr>
                   </thead>
                   <tbody id="archive-details-items"></tbody>
+                  <tfoot>
+                    <tr>
+                      <th colspan="3">ИТОГО</th>
+                      <th id="details-total-qty">0</th>
+                      <th id="details-total-weight">0.00</th>
+                      <th id="details-total-volume">0.00</th>
+                      <th>-</th>
+                      <th>-</th>
+                      <th id="details-total-money">0.00 ₸</th>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
           </article>
         </div>
+      </section>
+
+      <section id="tab-admin" class="tab-panel stack-lg">
+        <form id="admin-user-form" class="section-card card stack-md">
+          <h2 class="section-title">Регистрация пользователя</h2>
+          <div class="form-grid">
+            <label class="form-field">
+              <span class="field-label">Логин</span>
+              <input id="admin-new-login" required>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Пароль</span>
+              <input id="admin-new-password" type="password" required>
+            </label>
+            <label class="form-field">
+              <span class="field-label">Роль</span>
+              <select id="admin-new-role" required>
+                <option value="user">Пользователь</option>
+                <option value="admin">Админ</option>
+              </select>
+            </label>
+          </div>
+          <div class="action-row">
+            <button type="submit" class="btn btn-primary">Создать пользователя</button>
+          </div>
+        </form>
+
+        <article class="section-card card">
+          <h2 class="section-title">Пользователи и роли</h2>
+          <div class="archive-table-wrap">
+            <table class="archive-table">
+              <thead>
+                <tr>
+                  <th>Логин</th>
+                  <th>Текущая роль</th>
+                  <th>Изменить роль</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-body"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
     </main>
 
@@ -283,6 +376,7 @@
       <button class="bottom-tab" data-tab="invoices">Накладные</button>
       <button class="bottom-tab" data-tab="wagons">Вагоны</button>
       <button class="bottom-tab" data-tab="archive">Архив</button>
+      <button id="nav-admin" class="bottom-tab hidden" data-tab="admin">Админ</button>
     </nav>
 
     <div id="toast" class="toast"></div>

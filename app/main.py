@@ -3,17 +3,25 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.models import (
     InvoiceCreate,
+    InvoiceUpdate,
+    LoginRequest,
     TariffApply,
+    UserCreate,
+    UserRoleUpdate,
     WagonAllocationCreate,
     WagonAssignRequest,
     WagonCreate,
@@ -43,6 +51,98 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+AUTH_SECRET = os.getenv("AUTH_SECRET", "sklad-auth-secret-2026").encode("utf-8")
+TOKEN_TTL_SECONDS = 60 * 60 * 12
+
+
+def _password_hash(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _ensure_default_admin() -> None:
+    users = store.list_rows("users")
+    has_admin = any((row.get("login") or "").strip().lower() == "admin" for row in users)
+    if has_admin:
+        return
+    store.append_row(
+        "users",
+        {
+            "user_id": str(uuid.uuid4()),
+            "login": "admin",
+            "password_hash": _password_hash("123"),
+            "role": "admin",
+        },
+    )
+
+
+def _token_sign(data: bytes) -> str:
+    signature = hmac.new(AUTH_SECRET, data, hashlib.sha256).digest()
+    return urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+
+
+def _token_encode(payload: dict) -> str:
+    payload_bytes = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload_part = urlsafe_b64encode(payload_bytes).decode("utf-8").rstrip("=")
+    sign_part = _token_sign(payload_bytes)
+    return f"{payload_part}.{sign_part}"
+
+
+def _token_decode(token: str) -> dict:
+    parts = token.split(".")
+    if len(parts) != 2:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    payload_part, sign_part = parts
+    payload_part += "=" * ((4 - len(payload_part) % 4) % 4)
+    payload_bytes = urlsafe_b64decode(payload_part.encode("utf-8"))
+    expected_sign = _token_sign(payload_bytes)
+    if not hmac.compare_digest(expected_sign, sign_part):
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+    payload = json.loads(payload_bytes.decode("utf-8"))
+    if int(payload.get("exp", 0)) < int(datetime.now(timezone.utc).timestamp()):
+        raise HTTPException(status_code=401, detail="Token expired")
+    return payload
+
+
+def _extract_bearer(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    prefix = "Bearer "
+    if not authorization.startswith(prefix):
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    return authorization[len(prefix) :].strip()
+
+
+def _current_user(authorization: str | None) -> dict[str, str]:
+    token = _extract_bearer(authorization)
+    payload = _token_decode(token)
+    user_id = payload.get("user_id", "")
+    users = store.list_rows("users")
+    for row in users:
+        if row["user_id"] == user_id:
+            return row
+    raise HTTPException(status_code=401, detail="User not found")
+
+
+def _require_admin(authorization: str | None) -> dict[str, str]:
+    user = _current_user(authorization)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _current_user_with_fallback_token(authorization: str | None, token: str | None) -> dict[str, str]:
+    if authorization:
+        return _current_user(authorization)
+    if token:
+        payload = _token_decode(token)
+        user_id = payload.get("user_id", "")
+        for row in store.list_rows("users"):
+            if row["user_id"] == user_id:
+                return row
+    raise HTTPException(status_code=401, detail="Authorization required")
+
+
 
 
 def _to_float(value: str | float | int | None) -> float:
@@ -114,6 +214,68 @@ def _next_wagon_code() -> str:
     return _next_code(store.list_rows("wagons"), "wagon_code", "WG-", 5)
 
 
+def _dedupe_table_by_id(table_name: str, id_key: str) -> int:
+    rows = store.list_rows(table_name)
+    latest_by_id: dict[str, dict[str, str]] = {}
+    for row in rows:
+        row_id = (row.get(id_key) or "").strip()
+        if not row_id:
+            continue
+        existing = latest_by_id.get(row_id)
+        if not existing or (row.get("updated_at", ""), row.get("created_at", "")) > (
+            existing.get("updated_at", ""),
+            existing.get("created_at", ""),
+        ):
+            latest_by_id[row_id] = row
+    if len(latest_by_id) == len(rows):
+        return 0
+    deduped_rows = sorted(latest_by_id.values(), key=lambda x: (x.get("created_at", ""), x.get(id_key, "")))
+    store.replace_rows(table_name, deduped_rows)
+    return len(rows) - len(deduped_rows)
+
+
+def _dedupe_all() -> None:
+    _dedupe_table_by_id("invoices", "invoice_id")
+    _dedupe_table_by_id("invoice_items", "item_id")
+    _dedupe_table_by_id("wagons", "wagon_id")
+    _dedupe_table_by_id("wagon_allocations", "allocation_id")
+    _dedupe_table_by_id("users", "user_id")
+    _dedupe_table_by_id("idempotency_keys", "idempotency_key")
+
+
+def _invoice_metrics(items: list[dict[str, str]]) -> dict[str, str]:
+    total_qty = sum(_to_int(x.get("quantity")) for x in items)
+    total_weight = sum(_to_float(x.get("weight_kg")) for x in items)
+    total_volume = sum(_to_float(x.get("volume_m3")) for x in items)
+    return {
+        "total_quantity": str(total_qty),
+        "total_weight_kg": _fmt2(round(total_weight, 2)),
+        "total_volume_m3": _fmt2(round(total_volume, 2)),
+    }
+
+
+def _idempotency_get(route: str, key: str) -> str | None:
+    for row in store.list_rows("idempotency_keys"):
+        if row.get("route") == route and row.get("idempotency_key") == key:
+            return row.get("entity_id") or None
+    return None
+
+
+def _idempotency_save(route: str, key: str, entity_id: str) -> None:
+    store.append_row(
+        "idempotency_keys",
+        {
+            "idempotency_key": key,
+            "route": route,
+            "entity_id": entity_id,
+        },
+    )
+
+
+_ensure_default_admin()
+_dedupe_all()
+
+
 def _scale_value(original_value: str, original_qty: int, new_qty: int) -> float:
     if original_qty <= 0:
         return 0.0
@@ -142,9 +304,11 @@ def _invoice_payload(invoice_id: str) -> dict:
     invoice = _invoice_or_404(invoice_id)
     items = _items_by_invoice(invoice_id)
     allocations = [row for row in store.list_rows("wagon_allocations") if row["invoice_id"] == invoice_id]
+    metrics = _invoice_metrics(items)
     return {
         "invoice": {
             **invoice,
+            **metrics,
             "has_tariff": _has_tariff(invoice),
             "has_pdf": invoice.get("pdf_file", "") != "",
         },
@@ -223,13 +387,90 @@ def root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+def _auth_payload(user: dict[str, str]) -> dict[str, str]:
+    return {"user_id": user["user_id"], "login": user["login"], "role": user.get("role", "user")}
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/auth/login")
+def login(payload: LoginRequest) -> dict:
+    login = payload.login.strip().lower()
+    password_hash = _password_hash(payload.password)
+    for user in store.list_rows("users"):
+        if user.get("login", "").strip().lower() == login and user.get("password_hash") == password_hash:
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            token = _token_encode(
+                {
+                    "user_id": user["user_id"],
+                    "login": user["login"],
+                    "role": user.get("role", "user"),
+                    "iat": now_ts,
+                    "exp": now_ts + TOKEN_TTL_SECONDS,
+                }
+            )
+            return {"token": token, "user": _auth_payload(user)}
+    raise HTTPException(status_code=401, detail="Invalid login or password")
+
+
+@app.get("/api/auth/me")
+def me(authorization: str | None = Header(default=None)) -> dict:
+    user = _current_user(authorization)
+    return {"user": _auth_payload(user)}
+
+
+@app.get("/api/admin/users")
+def list_users(authorization: str | None = Header(default=None)) -> dict[str, list[dict[str, str]]]:
+    _require_admin(authorization)
+    users = store.list_rows("users")
+    users.sort(key=lambda row: row.get("created_at", ""), reverse=True)
+    return {"users": [_auth_payload(row) for row in users]}
+
+
+@app.post("/api/admin/users")
+def create_user(payload: UserCreate, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _require_admin(authorization)
+    login = payload.login.strip()
+    if any(row.get("login", "").strip().lower() == login.lower() for row in store.list_rows("users")):
+        raise HTTPException(status_code=400, detail="Login already exists")
+    user = store.append_row(
+        "users",
+        {
+            "user_id": str(uuid.uuid4()),
+            "login": login,
+            "password_hash": _password_hash(payload.password),
+            "role": payload.role,
+        },
+    )
+    return _auth_payload(user)
+
+
+@app.patch("/api/admin/users/{user_id}/role")
+def update_user_role(user_id: str, payload: UserRoleUpdate, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    admin = _require_admin(authorization)
+    users = store.list_rows("users")
+    target = next((x for x in users if x["user_id"] == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["login"].strip().lower() == "admin" and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="Default admin role cannot be changed")
+    if target["user_id"] == admin["user_id"] and payload.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot remove admin role from yourself")
+    store.update_rows(
+        "users",
+        predicate=lambda row: row["user_id"] == user_id,
+        updater=lambda row: {**row, "role": payload.role},
+    )
+    refreshed = next(x for x in store.list_rows("users") if x["user_id"] == user_id)
+    return _auth_payload(refreshed)
+
+
 @app.get("/api/next-numbers")
-def next_numbers() -> dict[str, str]:
+def next_numbers(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _current_user(authorization)
     return {
         "next_invoice_number": _next_invoice_number(),
         "next_wagon_code": _next_wagon_code(),
@@ -237,7 +478,8 @@ def next_numbers() -> dict[str, str]:
 
 
 @app.get("/api/item-templates")
-def item_templates() -> dict[str, list[dict[str, str]]]:
+def item_templates(authorization: str | None = Header(default=None)) -> dict[str, list[dict[str, str]]]:
+    _current_user(authorization)
     templates: dict[str, dict[str, str]] = {}
     for row in store.list_rows("invoice_items"):
         name = (row.get("name") or "").strip()
@@ -262,7 +504,17 @@ def item_templates() -> dict[str, list[dict[str, str]]]:
 
 
 @app.post("/api/invoices")
-def create_invoice(payload: InvoiceCreate) -> dict:
+def create_invoice(
+    payload: InvoiceCreate,
+    authorization: str | None = Header(default=None),
+    x_idempotency_key: str | None = Header(default=None),
+) -> dict:
+    _current_user(authorization)
+    if x_idempotency_key:
+        existing_invoice_id = _idempotency_get("create_invoice", x_idempotency_key)
+        if existing_invoice_id:
+            return _invoice_payload(existing_invoice_id)
+
     invoice_id = str(uuid.uuid4())
     invoice_number = _next_invoice_number()
     store.append_row(
@@ -302,24 +554,39 @@ def create_invoice(payload: InvoiceCreate) -> dict:
             },
         )
 
+    if x_idempotency_key:
+        _idempotency_save("create_invoice", x_idempotency_key, invoice_id)
+
     return _invoice_payload(invoice_id)
 
 
 @app.get("/api/invoices")
-def list_invoices() -> dict[str, list[dict]]:
+def list_invoices(authorization: str | None = Header(default=None)) -> dict[str, list[dict]]:
+    _current_user(authorization)
+    _dedupe_all()
     invoices = store.list_rows("invoices")
     items = store.list_rows("invoice_items")
-    items_count_by_invoice: dict[str, int] = {}
+    metrics_by_invoice: dict[str, dict[str, float]] = {}
     for item in items:
-        items_count_by_invoice[item["invoice_id"]] = items_count_by_invoice.get(item["invoice_id"], 0) + 1
+        invoice_id = item["invoice_id"]
+        if invoice_id not in metrics_by_invoice:
+            metrics_by_invoice[invoice_id] = {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0}
+        metrics_by_invoice[invoice_id]["items_count"] += 1
+        metrics_by_invoice[invoice_id]["quantity"] += _to_int(item.get("quantity"))
+        metrics_by_invoice[invoice_id]["weight"] += _to_float(item.get("weight_kg"))
+        metrics_by_invoice[invoice_id]["volume"] += _to_float(item.get("volume_m3"))
 
     invoices.sort(key=lambda row: row["created_at"], reverse=True)
     payload = []
     for row in invoices:
+        metrics = metrics_by_invoice.get(row["invoice_id"], {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0})
         payload.append(
             {
                 **row,
-                "items_count": items_count_by_invoice.get(row["invoice_id"], 0),
+                "items_count": int(metrics["items_count"]),
+                "total_quantity": int(metrics["quantity"]),
+                "total_weight_kg": _fmt2(round(metrics["weight"], 2)),
+                "total_volume_m3": _fmt2(round(metrics["volume"], 2)),
                 "has_tariff": _has_tariff(row),
                 "has_pdf": row.get("pdf_file", "") != "",
             }
@@ -328,12 +595,16 @@ def list_invoices() -> dict[str, list[dict]]:
 
 
 @app.get("/api/invoices/{invoice_id}")
-def get_invoice(invoice_id: str) -> dict:
+def get_invoice(invoice_id: str, authorization: str | None = Header(default=None)) -> dict:
+    _current_user(authorization)
     return _invoice_payload(invoice_id)
 
 
 @app.get("/api/invoices/{invoice_id}/pdf")
-def download_invoice_pdf(invoice_id: str) -> FileResponse:
+def download_invoice_pdf(
+    invoice_id: str, authorization: str | None = Header(default=None), token: str | None = Query(default=None)
+) -> FileResponse:
+    _current_user_with_fallback_token(authorization, token)
     invoice = _invoice_or_404(invoice_id)
     if not _has_tariff(invoice):
         raise HTTPException(status_code=400, detail="PDF is generated only after tariff assignment")
@@ -359,7 +630,10 @@ def download_invoice_pdf(invoice_id: str) -> FileResponse:
 
 
 @app.post("/api/invoices/{invoice_id}/tariff")
-def apply_tariff_to_selected_invoice(invoice_id: str, payload: TariffApply) -> dict:
+def apply_tariff_to_selected_invoice(
+    invoice_id: str, payload: TariffApply, authorization: str | None = Header(default=None)
+) -> dict:
+    _current_user(authorization)
     _invoice_or_404(invoice_id)
     store.update_rows(
         "invoices",
@@ -374,15 +648,86 @@ def apply_tariff_to_selected_invoice(invoice_id: str, payload: TariffApply) -> d
     return _invoice_payload(invoice_id)
 
 
+@app.put("/api/invoices/{invoice_id}")
+def update_invoice(
+    invoice_id: str,
+    payload: InvoiceUpdate,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _require_admin(authorization)
+    invoice = _invoice_or_404(invoice_id)
+    store.update_rows(
+        "invoices",
+        predicate=lambda row: row["invoice_id"] == invoice_id,
+        updater=lambda row: {
+            **row,
+            "shipper_name": payload.shipper_name,
+            "shipper_phone": payload.shipper_phone,
+            "consignee_name": payload.consignee_name,
+            "consignee_phone": payload.consignee_phone,
+            "creation_date": payload.creation_date.isoformat(),
+            "issued_date": payload.issued_date.isoformat(),
+            "pdf_file": "",
+            "tariff_price_per_kg": invoice.get("tariff_price_per_kg", ""),
+            "tariff_price_per_m3": invoice.get("tariff_price_per_m3", ""),
+        },
+    )
+
+    new_items: list[dict[str, str]] = []
+    for item in payload.items:
+        new_items.append(
+            {
+                "item_id": str(uuid.uuid4()),
+                "invoice_id": invoice_id,
+                "name": item.name,
+                "unit": item.unit,
+                "quantity": str(item.quantity),
+                "weight_kg": _fmt2(round(item.weight_kg, 2)),
+                "volume_m3": _fmt2(round(item.volume_m3, 2)),
+                "measure": item.measure,
+                "unit_price": "",
+                "line_total": "",
+            }
+        )
+    _replace_invoice_items(invoice_id, new_items)
+    _recalculate_invoice_with_tariff(invoice_id)
+    return _invoice_payload(invoice_id)
+
+
+@app.delete("/api/invoices/{invoice_id}")
+def delete_invoice(invoice_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _require_admin(authorization)
+    invoice = _invoice_or_404(invoice_id)
+    store.delete_rows("wagon_allocations", lambda row: row["invoice_id"] == invoice_id)
+    store.delete_rows("invoice_items", lambda row: row["invoice_id"] == invoice_id)
+    deleted = store.delete_rows("invoices", lambda row: row["invoice_id"] == invoice_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    pdf_ref = invoice.get("pdf_file", "")
+    if pdf_ref:
+        pdf_path = Path(pdf_ref)
+        if not pdf_path.is_absolute():
+            pdf_path = BASE_DIR / pdf_ref
+        if pdf_path.exists():
+            try:
+                pdf_path.unlink()
+            except OSError:
+                pass
+    return {"status": "deleted"}
+
+
 @app.get("/api/wagons")
-def list_wagons() -> dict[str, list[dict[str, str]]]:
+def list_wagons(authorization: str | None = Header(default=None)) -> dict[str, list[dict[str, str]]]:
+    _current_user(authorization)
     wagons = store.list_rows("wagons")
     wagons.sort(key=lambda row: row["created_at"], reverse=True)
     return {"wagons": wagons}
 
 
 @app.post("/api/wagons")
-def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
+def create_or_update_wagon(payload: WagonCreate, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _current_user(authorization)
     wagons = store.list_rows("wagons")
     incoming_code = (payload.wagon_code or "").strip()
     for wagon in wagons:
@@ -410,7 +755,10 @@ def create_or_update_wagon(payload: WagonCreate) -> dict[str, str]:
 
 
 @app.get("/api/allocations")
-def list_allocations(invoice_id: str | None = Query(default=None)) -> dict[str, list[dict[str, str]]]:
+def list_allocations(
+    invoice_id: str | None = Query(default=None), authorization: str | None = Header(default=None)
+) -> dict[str, list[dict[str, str]]]:
+    _current_user(authorization)
     allocations = store.list_rows("wagon_allocations")
     if invoice_id:
         allocations = [row for row in allocations if row["invoice_id"] == invoice_id]
@@ -419,7 +767,8 @@ def list_allocations(invoice_id: str | None = Query(default=None)) -> dict[str, 
 
 
 @app.post("/api/allocations")
-def create_allocation(payload: WagonAllocationCreate) -> dict[str, str]:
+def create_allocation(payload: WagonAllocationCreate, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    _current_user(authorization)
     _invoice_or_404(payload.invoice_id)
     wagons = {row["wagon_id"] for row in store.list_rows("wagons")}
     if payload.wagon_id not in wagons:
@@ -443,7 +792,8 @@ def create_allocation(payload: WagonAllocationCreate) -> dict[str, str]:
 
 
 @app.post("/api/wagon-assignments")
-def assign_invoice_to_wagon(payload: WagonAssignRequest) -> dict:
+def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | None = Header(default=None)) -> dict:
+    _current_user(authorization)
     invoice = _invoice_or_404(payload.invoice_id)
     wagons = {row["wagon_id"] for row in store.list_rows("wagons")}
     if payload.wagon_id not in wagons:

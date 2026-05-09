@@ -65,6 +65,21 @@ TABLE_SCHEMAS: dict[str, list[str]] = {
         "created_at",
         "updated_at",
     ],
+    "users": [
+        "user_id",
+        "login",
+        "password_hash",
+        "role",
+        "created_at",
+        "updated_at",
+    ],
+    "idempotency_keys": [
+        "idempotency_key",
+        "route",
+        "entity_id",
+        "created_at",
+        "updated_at",
+    ],
 }
 
 
@@ -152,6 +167,14 @@ class _CsvBackend:
             writer.writeheader()
             writer.writerows(normalized_rows)
 
+    def delete_rows(self, table_name: str, predicate: Callable[[dict[str, str]], bool]) -> int:
+        rows = self.list_rows(table_name)
+        kept_rows = [row for row in rows if not predicate(row)]
+        deleted = len(rows) - len(kept_rows)
+        if deleted:
+            self.replace_rows(table_name, kept_rows)
+        return deleted
+
 
 class _SqlBackend:
     def __init__(self, database_url: str) -> None:
@@ -217,6 +240,14 @@ class _SqlBackend:
             if normalized_rows:
                 conn.execute(insert(self.tables[table_name]), normalized_rows)
 
+    def delete_rows(self, table_name: str, predicate: Callable[[dict[str, str]], bool]) -> int:
+        rows = self.list_rows(table_name)
+        kept_rows = [row for row in rows if not predicate(row)]
+        deleted = len(rows) - len(kept_rows)
+        if deleted:
+            self.replace_rows(table_name, kept_rows)
+        return deleted
+
 
 @dataclass
 class CsvStore:
@@ -247,3 +278,6 @@ class CsvStore:
 
     def replace_rows(self, table_name: str, rows: list[dict[str, str]]) -> None:
         self._backend.replace_rows(table_name, rows)
+
+    def delete_rows(self, table_name: str, predicate: Callable[[dict[str, str]], bool]) -> int:
+        return self._backend.delete_rows(table_name, predicate)
