@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from sqlalchemy import Column, MetaData, String, Table, create_engine, delete, insert, select
+from sqlalchemy import Column, MetaData, String, Table, create_engine, delete, insert, inspect, select, text
 
 
 def now_iso() -> str:
@@ -194,6 +194,18 @@ class _SqlBackend:
             columns = [Column(header, String, nullable=False, default="") for header in headers]
             self.tables[table_name] = Table(table_name, self.metadata, *columns)
         self.metadata.create_all(self.engine)
+        self._ensure_missing_columns()
+
+    def _ensure_missing_columns(self) -> None:
+        inspector = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table_name, headers in TABLE_SCHEMAS.items():
+                if table_name not in inspector.get_table_names():
+                    continue
+                existing_cols = {col["name"] for col in inspector.get_columns(table_name)}
+                missing_cols = [col for col in headers if col not in existing_cols]
+                for col in missing_cols:
+                    conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{col}" VARCHAR NOT NULL DEFAULT \'\''))
 
     def list_rows(self, table_name: str) -> list[dict[str, str]]:
         table = self.tables[table_name]
