@@ -17,10 +17,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.models import (
     InvoiceCreate,
+    InvoiceStatusUpdate,
     InvoiceUpdate,
     LoginRequest,
     TariffApply,
     UserCreate,
+    UserPasswordReset,
     UserRoleUpdate,
     WagonAllocationCreate,
     WagonAssignRequest,
@@ -54,6 +56,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 AUTH_SECRET = os.getenv("AUTH_SECRET", "sklad-auth-secret-2026").encode("utf-8")
 TOKEN_TTL_SECONDS = 60 * 60 * 12
+WAGON_MAX_WEIGHT_KG = 64000.0
+WAGON_MAX_VOLUME_M3 = 130.0
 
 
 def _password_hash(password: str) -> str:
@@ -244,13 +248,48 @@ def _dedupe_all() -> None:
 
 
 def _invoice_metrics(items: list[dict[str, str]]) -> dict[str, str]:
-    total_qty = sum(_to_int(x.get("quantity")) for x in items)
-    total_weight = sum(_to_float(x.get("weight_kg")) for x in items)
-    total_volume = sum(_to_float(x.get("volume_m3")) for x in items)
+    total_qty = 0
+    total_weight = 0.0
+    total_volume = 0.0
+    total_weight_sum = 0.0
+    total_volume_sum = 0.0
+    total_sum = 0.0
+    for x in items:
+        qty = _to_int(x.get("quantity"))
+        total_qty += qty
+        total_weight += _to_float(x.get("weight_kg")) * qty
+        total_volume += _to_float(x.get("volume_m3")) * qty
+        total_weight_sum += _to_float(x.get("line_total_weight"))
+        total_volume_sum += _to_float(x.get("line_total_volume"))
+        total_sum += _to_float(x.get("line_total"))
     return {
         "total_quantity": str(total_qty),
         "total_weight_kg": _fmt2(round(total_weight, 2)),
         "total_volume_m3": _fmt2(round(total_volume, 2)),
+        "total_weight_sum": _fmt2(round(total_weight_sum, 2)),
+        "total_volume_sum": _fmt2(round(total_volume_sum, 2)),
+        "total_sum": _fmt2(round(total_sum, 2)),
+    }
+
+
+def _wagon_usage(wagon_id: str) -> dict[str, float]:
+    used_weight = 0.0
+    used_volume = 0.0
+    for row in store.list_rows("wagon_allocations"):
+        if row.get("wagon_id") != wagon_id:
+            continue
+        used_weight += _to_float(row.get("allocation_weight_kg"))
+        used_volume += _to_float(row.get("allocation_volume_m3"))
+
+    remaining_weight = max(0.0, WAGON_MAX_WEIGHT_KG - used_weight)
+    remaining_volume = max(0.0, WAGON_MAX_VOLUME_M3 - used_volume)
+    return {
+        "max_weight_kg": WAGON_MAX_WEIGHT_KG,
+        "max_volume_m3": WAGON_MAX_VOLUME_M3,
+        "used_weight_kg": round(used_weight, 2),
+        "used_volume_m3": round(used_volume, 2),
+        "remaining_weight_kg": round(remaining_weight, 2),
+        "remaining_volume_m3": round(remaining_volume, 2),
     }
 
 
@@ -309,6 +348,7 @@ def _invoice_payload(invoice_id: str) -> dict:
         "invoice": {
             **invoice,
             **metrics,
+            "status": invoice.get("status") or "formed",
             "has_tariff": _has_tariff(invoice),
             "has_pdf": invoice.get("pdf_file", "") != "",
         },
@@ -356,16 +396,25 @@ def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
     updated_items: dict[str, dict[str, str]] = {}
     total_amount = 0.0
     for item in items:
+        qty = _to_int(item.get("quantity"))
+        weight_sum = _to_float(item["weight_kg"]) * price_per_kg * qty
+        volume_sum = _to_float(item["volume_m3"]) * price_per_m3 * qty
         if item["measure"] == "weight":
             unit_price = price_per_kg
-            line_total = _to_float(item["weight_kg"]) * unit_price
+            line_total = weight_sum
+            line_total_weight = weight_sum
+            line_total_volume = 0.0
         else:
             unit_price = price_per_m3
-            line_total = _to_float(item["volume_m3"]) * unit_price
+            line_total = volume_sum
+            line_total_weight = 0.0
+            line_total_volume = volume_sum
         total_amount += line_total
         updated_items[item["item_id"]] = {
             **item,
             "unit_price": _fmt2(unit_price),
+            "line_total_weight": _fmt2(round(line_total_weight, 2)),
+            "line_total_volume": _fmt2(round(line_total_volume, 2)),
             "line_total": _fmt2(round(line_total, 2)),
         }
 
@@ -468,6 +517,23 @@ def update_user_role(user_id: str, payload: UserRoleUpdate, authorization: str |
     return _auth_payload(refreshed)
 
 
+@app.patch("/api/admin/users/{user_id}/password")
+def reset_user_password(
+    user_id: str, payload: UserPasswordReset, authorization: str | None = Header(default=None)
+) -> dict[str, str]:
+    _require_admin(authorization)
+    users = store.list_rows("users")
+    target = next((x for x in users if x["user_id"] == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    store.update_rows(
+        "users",
+        predicate=lambda row: row["user_id"] == user_id,
+        updater=lambda row: {**row, "password_hash": _password_hash(payload.password)},
+    )
+    return {"status": "password_reset"}
+
+
 @app.get("/api/next-numbers")
 def next_numbers(authorization: str | None = Header(default=None)) -> dict[str, str]:
     _current_user(authorization)
@@ -531,6 +597,7 @@ def create_invoice(
             "estimated_release_date": "",
             "tariff_price_per_kg": "",
             "tariff_price_per_m3": "",
+            "status": "formed",
             "total_amount": "0.00",
             "pdf_file": "",
         },
@@ -550,6 +617,8 @@ def create_invoice(
                 "volume_m3": _fmt2(round(item.volume_m3, 2)),
                 "measure": item.measure,
                 "unit_price": "",
+                "line_total_weight": "",
+                "line_total_volume": "",
                 "line_total": "",
             },
         )
@@ -570,16 +639,29 @@ def list_invoices(authorization: str | None = Header(default=None)) -> dict[str,
     for item in items:
         invoice_id = item["invoice_id"]
         if invoice_id not in metrics_by_invoice:
-            metrics_by_invoice[invoice_id] = {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0}
+            metrics_by_invoice[invoice_id] = {
+                "items_count": 0.0,
+                "quantity": 0.0,
+                "weight": 0.0,
+                "volume": 0.0,
+                "weight_sum": 0.0,
+                "volume_sum": 0.0,
+            }
+        qty = _to_int(item.get("quantity"))
         metrics_by_invoice[invoice_id]["items_count"] += 1
-        metrics_by_invoice[invoice_id]["quantity"] += _to_int(item.get("quantity"))
-        metrics_by_invoice[invoice_id]["weight"] += _to_float(item.get("weight_kg"))
-        metrics_by_invoice[invoice_id]["volume"] += _to_float(item.get("volume_m3"))
+        metrics_by_invoice[invoice_id]["quantity"] += qty
+        metrics_by_invoice[invoice_id]["weight"] += _to_float(item.get("weight_kg")) * qty
+        metrics_by_invoice[invoice_id]["volume"] += _to_float(item.get("volume_m3")) * qty
+        metrics_by_invoice[invoice_id]["weight_sum"] += _to_float(item.get("line_total_weight"))
+        metrics_by_invoice[invoice_id]["volume_sum"] += _to_float(item.get("line_total_volume"))
 
     invoices.sort(key=lambda row: row["created_at"], reverse=True)
     payload = []
     for row in invoices:
-        metrics = metrics_by_invoice.get(row["invoice_id"], {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0})
+        metrics = metrics_by_invoice.get(
+            row["invoice_id"],
+            {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0, "weight_sum": 0.0, "volume_sum": 0.0},
+        )
         payload.append(
             {
                 **row,
@@ -587,6 +669,9 @@ def list_invoices(authorization: str | None = Header(default=None)) -> dict[str,
                 "total_quantity": int(metrics["quantity"]),
                 "total_weight_kg": _fmt2(round(metrics["weight"], 2)),
                 "total_volume_m3": _fmt2(round(metrics["volume"], 2)),
+                "total_weight_sum": _fmt2(round(metrics["weight_sum"], 2)),
+                "total_volume_sum": _fmt2(round(metrics["volume_sum"], 2)),
+                "status": row.get("status") or "formed",
                 "has_tariff": _has_tariff(row),
                 "has_pdf": row.get("pdf_file", "") != "",
             }
@@ -648,6 +733,22 @@ def apply_tariff_to_selected_invoice(
     return _invoice_payload(invoice_id)
 
 
+@app.patch("/api/invoices/{invoice_id}/status")
+def update_invoice_status(
+    invoice_id: str, payload: InvoiceStatusUpdate, authorization: str | None = Header(default=None)
+) -> dict:
+    _current_user(authorization)
+    _invoice_or_404(invoice_id)
+    if payload.status in {"formed", "loading"}:
+        raise HTTPException(status_code=400, detail="This status is set automatically")
+    store.update_rows(
+        "invoices",
+        predicate=lambda row: row["invoice_id"] == invoice_id,
+        updater=lambda row: {**row, "status": payload.status},
+    )
+    return _invoice_payload(invoice_id)
+
+
 @app.put("/api/invoices/{invoice_id}")
 def update_invoice(
     invoice_id: str,
@@ -670,6 +771,7 @@ def update_invoice(
             "pdf_file": "",
             "tariff_price_per_kg": invoice.get("tariff_price_per_kg", ""),
             "tariff_price_per_m3": invoice.get("tariff_price_per_m3", ""),
+            "status": invoice.get("status", "formed"),
         },
     )
 
@@ -686,6 +788,8 @@ def update_invoice(
                 "volume_m3": _fmt2(round(item.volume_m3, 2)),
                 "measure": item.measure,
                 "unit_price": "",
+                "line_total_weight": "",
+                "line_total_volume": "",
                 "line_total": "",
             }
         )
@@ -722,7 +826,51 @@ def list_wagons(authorization: str | None = Header(default=None)) -> dict[str, l
     _current_user(authorization)
     wagons = store.list_rows("wagons")
     wagons.sort(key=lambda row: row["created_at"], reverse=True)
-    return {"wagons": wagons}
+    payload: list[dict[str, str]] = []
+    for wagon in wagons:
+        usage = _wagon_usage(wagon["wagon_id"])
+        payload.append(
+            {
+                **wagon,
+                "max_weight_kg": _fmt2(usage["max_weight_kg"]),
+                "max_volume_m3": _fmt2(usage["max_volume_m3"]),
+                "used_weight_kg": _fmt2(usage["used_weight_kg"]),
+                "used_volume_m3": _fmt2(usage["used_volume_m3"]),
+                "remaining_weight_kg": _fmt2(usage["remaining_weight_kg"]),
+                "remaining_volume_m3": _fmt2(usage["remaining_volume_m3"]),
+            }
+        )
+    return {"wagons": payload}
+
+
+@app.get("/api/wagons/{wagon_id}/capacity")
+def wagon_capacity(
+    wagon_id: str, invoice_id: str | None = Query(default=None), authorization: str | None = Header(default=None)
+) -> dict[str, str | bool]:
+    _current_user(authorization)
+    if not any(x["wagon_id"] == wagon_id for x in store.list_rows("wagons")):
+        raise HTTPException(status_code=404, detail="Wagon not found")
+    usage = _wagon_usage(wagon_id)
+    invoice_weight = 0.0
+    invoice_volume = 0.0
+    fits_full = False
+    if invoice_id:
+        items = _items_by_invoice(invoice_id)
+        invoice_weight = sum(_to_float(x.get("weight_kg")) * _to_int(x.get("quantity")) for x in items)
+        invoice_volume = sum(_to_float(x.get("volume_m3")) * _to_int(x.get("quantity")) for x in items)
+        fits_full = invoice_weight <= usage["remaining_weight_kg"] and invoice_volume <= usage["remaining_volume_m3"]
+
+    return {
+        "max_weight_kg": _fmt2(usage["max_weight_kg"]),
+        "max_volume_m3": _fmt2(usage["max_volume_m3"]),
+        "used_weight_kg": _fmt2(usage["used_weight_kg"]),
+        "used_volume_m3": _fmt2(usage["used_volume_m3"]),
+        "remaining_weight_kg": _fmt2(usage["remaining_weight_kg"]),
+        "remaining_volume_m3": _fmt2(usage["remaining_volume_m3"]),
+        "invoice_weight_kg": _fmt2(invoice_weight),
+        "invoice_volume_m3": _fmt2(invoice_volume),
+        "fits_full_invoice": fits_full,
+    }
 
 
 @app.post("/api/wagons")
@@ -787,6 +935,8 @@ def create_allocation(payload: WagonAllocationCreate, authorization: str | None 
             "wagon_id": payload.wagon_id,
             "allocation_measure": payload.allocation_measure,
             "allocation_value": str(payload.allocation_value),
+            "allocation_weight_kg": "0.00",
+            "allocation_volume_m3": "0.00",
         },
     )
 
@@ -820,6 +970,8 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
 
     moved_rows: list[dict[str, str]] = []
     remaining_rows: list[dict[str, str]] = []
+    moved_total_weight = 0.0
+    moved_total_volume = 0.0
     for item in items:
         original_qty = _to_int(item["quantity"])
         moved_qty = moved_quantity_by_item.get(item["item_id"], 0)
@@ -827,24 +979,19 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
             raise HTTPException(status_code=400, detail=f"Invalid quantity for item line {item['line_no']}")
 
         if moved_qty > 0:
+            item_weight = _to_float(item["weight_kg"])
+            item_volume = _to_float(item["volume_m3"])
+            moved_weight = item_weight * moved_qty
+            moved_volume = item_volume * moved_qty
+            moved_total_weight += moved_weight
+            moved_total_volume += moved_volume
             moved_rows.append(
                 {
                     **item,
                     "quantity": str(moved_qty),
-                    "weight_kg": _fmt2(_scale_value(item["weight_kg"], original_qty, moved_qty)),
-                    "volume_m3": _fmt2(_scale_value(item["volume_m3"], original_qty, moved_qty)),
+                    "weight_kg": _fmt2(item_weight),
+                    "volume_m3": _fmt2(item_volume),
                 }
-            )
-            store.append_row(
-                "wagon_allocations",
-                {
-                    "allocation_id": str(uuid.uuid4()),
-                    "invoice_id": payload.invoice_id,
-                    "item_id": item["item_id"],
-                    "wagon_id": payload.wagon_id,
-                    "allocation_measure": "quantity",
-                    "allocation_value": str(moved_qty),
-                },
             )
 
         remaining_qty = original_qty - moved_qty
@@ -853,15 +1000,45 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
                 {
                     **item,
                     "quantity": str(remaining_qty),
-                    "weight_kg": _fmt2(_scale_value(item["weight_kg"], original_qty, remaining_qty)),
-                    "volume_m3": _fmt2(_scale_value(item["volume_m3"], original_qty, remaining_qty)),
+                    "weight_kg": _fmt2(_to_float(item["weight_kg"])),
+                    "volume_m3": _fmt2(_to_float(item["volume_m3"])),
                     "unit_price": "",
+                    "line_total_weight": "",
+                    "line_total_volume": "",
                     "line_total": "",
                 }
             )
 
     if not moved_rows:
         raise HTTPException(status_code=400, detail="Nothing was assigned to wagon")
+
+    usage = _wagon_usage(payload.wagon_id)
+    if moved_total_weight > usage["remaining_weight_kg"] or moved_total_volume > usage["remaining_volume_m3"]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Not enough wagon capacity. "
+                f"Remaining: {usage['remaining_weight_kg']:.2f} kg / {usage['remaining_volume_m3']:.2f} m3"
+            ),
+        )
+
+    for item in moved_rows:
+        moved_qty = _to_int(item["quantity"])
+        alloc_weight = _to_float(item["weight_kg"]) * moved_qty
+        alloc_volume = _to_float(item["volume_m3"]) * moved_qty
+        store.append_row(
+            "wagon_allocations",
+            {
+                "allocation_id": str(uuid.uuid4()),
+                "invoice_id": payload.invoice_id,
+                "item_id": item["item_id"],
+                "wagon_id": payload.wagon_id,
+                "allocation_measure": "quantity",
+                "allocation_value": str(moved_qty),
+                "allocation_weight_kg": _fmt2(round(alloc_weight, 2)),
+                "allocation_volume_m3": _fmt2(round(alloc_volume, 2)),
+            },
+        )
 
     _replace_invoice_items(payload.invoice_id, moved_rows)
     store.update_rows(
@@ -870,6 +1047,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
         updater=lambda row: {
             **row,
             "estimated_release_date": payload.estimated_release_date.isoformat(),
+            "status": "loading",
         },
     )
     _recalculate_invoice_with_tariff(payload.invoice_id)
@@ -892,6 +1070,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
                 "estimated_release_date": "",
                 "tariff_price_per_kg": "",
                 "tariff_price_per_m3": "",
+                "status": "formed",
                 "total_amount": "0.00",
                 "pdf_file": "",
             },
@@ -910,6 +1089,8 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
                     "volume_m3": row["volume_m3"],
                     "measure": row["measure"],
                     "unit_price": "",
+                    "line_total_weight": "",
+                    "line_total_volume": "",
                     "line_total": "",
                 },
             )

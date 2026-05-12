@@ -5,13 +5,21 @@ const state = {
   assignmentItems: [],
   itemTemplates: [],
   users: [],
-  selectedArchiveInvoiceId: "",
   editingInvoiceId: "",
   user: null,
   submittingInvoice: false,
+  invoiceFormDirty: false,
 };
 
 const toast = document.getElementById("toast");
+
+const STATUS_LABELS = {
+  formed: "Сформирована накладная",
+  loading: "Загружается на отправку",
+  in_transit: "В пути",
+  delivered: "Доставлено",
+  unloaded: "Выгружено",
+};
 
 function showToast(text) {
   if (!toast) return;
@@ -67,12 +75,8 @@ async function api(path, options = {}, opts = {}) {
     if (!token) throw new Error("Требуется вход в систему");
     headers.Authorization = `Bearer ${token}`;
   }
-  if (opts.idempotencyKey) {
-    headers["X-Idempotency-Key"] = opts.idempotencyKey;
-  }
-  if (!headers["Content-Type"] && options.body) {
-    headers["Content-Type"] = "application/json";
-  }
+  if (opts.idempotencyKey) headers["X-Idempotency-Key"] = opts.idempotencyKey;
+  if (!headers["Content-Type"] && options.body) headers["Content-Type"] = "application/json";
 
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
@@ -98,10 +102,19 @@ function normalizeKzPhone(rawValue) {
   return `+7${withoutCountry.slice(0, 10)}`;
 }
 
+function markInvoiceDirty() {
+  state.invoiceFormDirty = true;
+}
+
+function clearInvoiceDirty() {
+  state.invoiceFormDirty = false;
+}
+
 function initPhoneInputs() {
   document.querySelectorAll(".kz-phone").forEach((input) => {
     input.addEventListener("input", () => {
       input.value = normalizeKzPhone(input.value);
+      markInvoiceDirty();
     });
     input.addEventListener("focus", () => {
       if (!input.value || !input.value.startsWith("+7")) input.value = "+7";
@@ -124,17 +137,6 @@ function setDefaultDates() {
   if (creationDate && !creationDate.value) creationDate.value = today;
   if (issuedDate && !issuedDate.value) issuedDate.value = today;
   if (estReleaseDate && !estReleaseDate.value) estReleaseDate.value = today;
-}
-
-function applyItemNameOptions() {
-  const datalist = document.getElementById("item-name-options");
-  if (!datalist) return;
-  datalist.innerHTML = "";
-  state.itemTemplates.forEach((item) => {
-    const option = document.createElement("option");
-    option.value = item.name;
-    datalist.appendChild(option);
-  });
 }
 
 function templateByName(name) {
@@ -165,6 +167,42 @@ function toggleMeasureRequirements(row) {
   }
 }
 
+function hideSuggestions(row) {
+  const box = row.querySelector(".name-suggestions");
+  if (box) box.classList.add("hidden");
+}
+
+function showSuggestions(row, query) {
+  const box = row.querySelector(".name-suggestions");
+  if (!box) return;
+  const q = (query || "").trim().toLowerCase();
+  box.innerHTML = "";
+  if (!q) {
+    box.classList.add("hidden");
+    return;
+  }
+  const matches = state.itemTemplates.filter((x) => x.name.toLowerCase().includes(q)).slice(0, 8);
+  if (!matches.length) {
+    box.classList.add("hidden");
+    return;
+  }
+  matches.forEach((m) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "suggest-item";
+    btn.textContent = m.name;
+    btn.addEventListener("click", () => {
+      const input = row.querySelector("[data-field='name']");
+      input.value = m.name;
+      applyTemplateToRow(row, m);
+      hideSuggestions(row);
+      markInvoiceDirty();
+    });
+    box.appendChild(btn);
+  });
+  box.classList.remove("hidden");
+}
+
 function CargoPositionCard(index, data = null) {
   const row = document.createElement("div");
   row.className = "item-row";
@@ -176,7 +214,10 @@ function CargoPositionCard(index, data = null) {
     <div class="item-grid">
       <label class="form-field">
         <span class="field-label">Наименование</span>
-        <input data-field="name" list="item-name-options" required>
+        <div class="name-input-wrap">
+          <input data-field="name" autocomplete="off" required>
+          <div class="name-suggestions hidden"></div>
+        </div>
       </label>
       <label class="form-field">
         <span class="field-label">Ед. измерения</span>
@@ -204,29 +245,33 @@ function CargoPositionCard(index, data = null) {
     </div>
   `;
 
+  const nameInput = row.querySelector("[data-field='name']");
   row.querySelector(".remove-item").addEventListener("click", () => {
     row.remove();
     reindexItemRows();
+    markInvoiceDirty();
+  });
+  row.querySelectorAll("input,select").forEach((el) => {
+    el.addEventListener("input", markInvoiceDirty);
+    el.addEventListener("change", markInvoiceDirty);
   });
   row.querySelector("[data-field='measure']").addEventListener("change", () => toggleMeasureRequirements(row));
-  row.querySelector("[data-field='name']").addEventListener("change", (event) => {
-    const tpl = templateByName(event.target.value);
+  nameInput.addEventListener("input", (event) => showSuggestions(row, event.target.value));
+  nameInput.addEventListener("focus", (event) => showSuggestions(row, event.target.value));
+  nameInput.addEventListener("blur", () => {
+    const tpl = templateByName(nameInput.value);
     if (tpl) applyTemplateToRow(row, tpl);
-  });
-  row.querySelector("[data-field='name']").addEventListener("blur", (event) => {
-    const tpl = templateByName(event.target.value);
-    if (tpl) applyTemplateToRow(row, tpl);
+    setTimeout(() => hideSuggestions(row), 120);
   });
 
   if (data) {
-    row.querySelector("[data-field='name']").value = data.name || "";
+    nameInput.value = data.name || "";
     row.querySelector("[data-field='unit']").value = data.unit || "";
     row.querySelector("[data-field='quantity']").value = data.quantity || "";
     row.querySelector("[data-field='weight_kg']").value = data.weight_kg || "";
     row.querySelector("[data-field='volume_m3']").value = data.volume_m3 || "";
     row.querySelector("[data-field='measure']").value = data.measure || "weight";
   }
-
   toggleMeasureRequirements(row);
   return row;
 }
@@ -240,11 +285,8 @@ function reindexItemRows() {
 function addItemRow({ atTop = true, data = null } = {}) {
   const wrap = document.getElementById("items-wrap");
   const row = CargoPositionCard(1, data);
-  if (atTop) {
-    wrap.prepend(row);
-  } else {
-    wrap.appendChild(row);
-  }
+  if (atTop) wrap.prepend(row);
+  else wrap.appendChild(row);
   reindexItemRows();
 }
 
@@ -275,9 +317,7 @@ function gatherInvoicePayload() {
 }
 
 function generateIdempotencyKey() {
-  if (window.crypto && window.crypto.randomUUID) {
-    return window.crypto.randomUUID();
-  }
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
   return `inv-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
@@ -304,6 +344,7 @@ function resetInvoiceFormToCreate() {
   addItemRow({ atTop: true });
   setDefaultDates();
   setInvoiceFormMode();
+  clearInvoiceDirty();
 }
 
 function selectTab(tabName) {
@@ -331,19 +372,12 @@ function ShipmentCard(invoice) {
   const tariffBadge = invoice.has_tariff
     ? `<span class="badge badge-accent">Тариф назначен</span>`
     : `<span class="badge badge-muted">Тариф не назначен</span>`;
-  const pdfBadge = invoice.has_pdf
-    ? `<span class="badge badge-accent">PDF готов</span>`
-    : `<span class="badge badge-muted">PDF не готов</span>`;
-  const wagonBadge = invoice.estimated_release_date
-    ? `<span class="badge badge-accent">Выдача: ${invoice.estimated_release_date}</span>`
-    : `<span class="badge badge-muted">Вагон не назначен</span>`;
+  const statusBadge = `<span class="badge badge-muted">${STATUS_LABELS[invoice.status] || STATUS_LABELS.formed}</span>`;
 
   const adminActions =
     state.user?.role === "admin"
-      ? `
-      <button type="button" class="btn btn-secondary" data-action="edit">Редактировать</button>
-      <button type="button" class="btn btn-ghost" data-action="delete">Удалить</button>
-    `
+      ? `<button type="button" class="btn btn-secondary" data-action="edit">Редактировать</button>
+         <button type="button" class="btn btn-ghost" data-action="delete">Удалить</button>`
       : "";
 
   card.innerHTML = `
@@ -352,12 +386,18 @@ function ShipmentCard(invoice) {
     <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
     <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
     <p class="invoice-meta"><span class="meta-strong">Строк:</span> ${invoice.items_count} | <span class="meta-strong">Кол-во:</span> ${invoice.total_quantity} | <span class="meta-strong">Вес:</span> ${number2(invoice.total_weight_kg)} кг | <span class="meta-strong">Объем:</span> ${number2(invoice.total_volume_m3)} м³</p>
-    <p class="invoice-meta"><span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
-    <div class="badge-row">${tariffBadge}${pdfBadge}${wagonBadge}</div>
+    <p class="invoice-meta"><span class="meta-strong">Сумма вес:</span> ${moneyTenge(invoice.total_weight_sum)} | <span class="meta-strong">Сумма объем:</span> ${moneyTenge(invoice.total_volume_sum)} | <span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
+    <div class="badge-row">${tariffBadge}${statusBadge}</div>
     <div class="row-actions">
       <button type="button" class="btn btn-secondary" data-action="tariff">Тариф</button>
       <button type="button" class="btn btn-secondary" data-action="wagon">Вагон</button>
       <button type="button" class="btn btn-primary" data-action="pdf">PDF</button>
+      <select data-action="status-select" class="status-select">
+        <option value="in_transit" ${invoice.status === "in_transit" ? "selected" : ""}>В пути</option>
+        <option value="delivered" ${invoice.status === "delivered" ? "selected" : ""}>Доставлено</option>
+        <option value="unloaded" ${invoice.status === "unloaded" ? "selected" : ""}>Выгружено</option>
+      </select>
+      <button type="button" class="btn btn-secondary" data-action="status-save">Статус</button>
       ${adminActions}
     </div>
   `;
@@ -370,6 +410,7 @@ function ShipmentCard(invoice) {
   card.querySelector("[data-action='wagon']").addEventListener("click", async () => {
     document.getElementById("assignment-invoice").value = invoice.invoice_id;
     await loadAssignmentItems();
+    await updateWagonCapacityPreview();
     selectTab("wagons");
   });
   card.querySelector("[data-action='pdf']").addEventListener("click", () => {
@@ -379,6 +420,19 @@ function ShipmentCard(invoice) {
     }
     const token = encodeURIComponent(tokenGet());
     window.open(`/api/invoices/${invoice.invoice_id}/pdf?token=${token}`, "_blank");
+  });
+  card.querySelector("[data-action='status-save']").addEventListener("click", async () => {
+    try {
+      const status = card.querySelector("[data-action='status-select']").value;
+      await api(`/api/invoices/${invoice.invoice_id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      showToast("Статус обновлен");
+      await loadInvoices();
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
   if (state.user?.role === "admin") {
@@ -436,7 +490,6 @@ function applyArchiveFilters(source) {
   const createdFrom = document.getElementById("f-created-from").value;
   const createdTo = document.getElementById("f-created-to").value;
   const hasTariff = document.getElementById("f-has-tariff").value;
-
   return source.filter((row) => {
     if (invoiceNumber && !row.invoice_number.toLowerCase().includes(invoiceNumber)) return false;
     if (shipper && !row.shipper_name.toLowerCase().includes(shipper)) return false;
@@ -456,7 +509,6 @@ function applyInvoiceFilters(source) {
   const createdFrom = document.getElementById("inv-f-created-from").value;
   const createdTo = document.getElementById("inv-f-created-to").value;
   const hasTariff = document.getElementById("inv-f-has-tariff").value;
-
   return source.filter((row) => {
     if (number && !row.invoice_number.toLowerCase().includes(number)) return false;
     if (shipper && !row.shipper_name.toLowerCase().includes(shipper)) return false;
@@ -473,15 +525,16 @@ function renderArchive() {
   const body = document.getElementById("archive-body");
   body.innerHTML = "";
   const filtered = applyArchiveFilters(state.invoices);
-
   let totalLines = 0;
   let totalQty = 0;
   let totalWeight = 0;
   let totalVolume = 0;
+  let totalWeightSum = 0;
+  let totalVolumeSum = 0;
   let totalMoney = 0;
 
   if (!filtered.length) {
-    body.innerHTML = "<tr><td colspan='12'>Нет данных по выбранным фильтрам</td></tr>";
+    body.innerHTML = "<tr><td colspan='15'>Нет данных по выбранным фильтрам</td></tr>";
   } else {
     filtered.forEach((row) => {
       const tr = document.createElement("tr");
@@ -490,21 +543,25 @@ function renderArchive() {
         <td>${row.creation_date || "-"}</td>
         <td>${row.issued_date || "-"}</td>
         <td>${row.estimated_release_date || "-"}</td>
+        <td>${STATUS_LABELS[row.status] || STATUS_LABELS.formed}</td>
         <td>${row.shipper_name}</td>
         <td>${row.consignee_name}</td>
         <td>${row.items_count}</td>
         <td>${row.total_quantity}</td>
         <td>${number2(row.total_weight_kg)}</td>
         <td>${number2(row.total_volume_m3)}</td>
+        <td>${moneyTenge(row.total_weight_sum)}</td>
+        <td>${moneyTenge(row.total_volume_sum)}</td>
         <td>${moneyTenge(row.total_amount)}</td>
         <td>${row.has_tariff ? "Да" : "Нет"}</td>
       `;
       body.appendChild(tr);
-
       totalLines += Number(row.items_count || 0);
       totalQty += Number(row.total_quantity || 0);
       totalWeight += Number(row.total_weight_kg || 0);
       totalVolume += Number(row.total_volume_m3 || 0);
+      totalWeightSum += Number(row.total_weight_sum || 0);
+      totalVolumeSum += Number(row.total_volume_sum || 0);
       totalMoney += Number(row.total_amount || 0);
     });
   }
@@ -513,17 +570,17 @@ function renderArchive() {
   document.getElementById("archive-total-qty").textContent = String(totalQty);
   document.getElementById("archive-total-weight").textContent = number2(totalWeight);
   document.getElementById("archive-total-volume").textContent = number2(totalVolume);
+  document.getElementById("archive-total-weight-sum").textContent = moneyTenge(totalWeightSum);
+  document.getElementById("archive-total-volume-sum").textContent = moneyTenge(totalVolumeSum);
   document.getElementById("archive-total-money").textContent = moneyTenge(totalMoney);
 }
 
 function renderArchiveWagonsTable() {
   const body = document.getElementById("archive-wagons-body");
   body.innerHTML = "";
-
   const invoicesById = Object.fromEntries(state.invoices.map((x) => [x.invoice_id, x]));
   const wagonsById = Object.fromEntries(state.wagons.map((x) => [x.wagon_id, x]));
   const grouped = new Map();
-
   state.allocations.forEach((alloc) => {
     const key = `${alloc.wagon_id}::${alloc.invoice_id}`;
     if (!grouped.has(key)) {
@@ -538,10 +595,8 @@ function renderArchiveWagonsTable() {
     row.allocatedTotal += Number(alloc.allocation_value || 0);
     row.entries += 1;
   });
-
   let totalAllocated = 0;
   let totalEntries = 0;
-
   if (!grouped.size) {
     body.innerHTML = "<tr><td colspan='7'>Пока нет распределений по вагонам</td></tr>";
   } else {
@@ -561,18 +616,15 @@ function renderArchiveWagonsTable() {
       totalEntries += row.entries;
     });
   }
-
   document.getElementById("archive-wagons-total-allocated").textContent = number2(totalAllocated);
   document.getElementById("archive-wagons-total-entries").textContent = String(totalEntries);
 }
 
 async function loadArchiveInvoiceDetails(invoiceId) {
-  state.selectedArchiveInvoiceId = invoiceId;
   const empty = document.getElementById("archive-details-empty");
   const content = document.getElementById("archive-details-content");
   const meta = document.getElementById("archive-details-meta");
   const itemsBody = document.getElementById("archive-details-items");
-
   try {
     const payload = await api(`/api/invoices/${invoiceId}`);
     const invoice = payload.invoice;
@@ -580,59 +632,64 @@ async function loadArchiveInvoiceDetails(invoiceId) {
     const allocations = payload.allocations || [];
     const wagonsById = Object.fromEntries(state.wagons.map((w) => [w.wagon_id, w]));
     const directions = new Set(
-      allocations
-        .map((a) => wagonsById[a.wagon_id]?.destination || wagonsById[a.wagon_id]?.wagon_code)
-        .filter(Boolean),
+      allocations.map((a) => wagonsById[a.wagon_id]?.destination || wagonsById[a.wagon_id]?.wagon_code).filter(Boolean),
     );
 
     meta.innerHTML = `
       <p class="invoice-meta"><span class="meta-strong">Накладная:</span> № ${invoice.invoice_number}</p>
+      <p class="invoice-meta"><span class="meta-strong">Статус:</span> ${STATUS_LABELS[invoice.status] || STATUS_LABELS.formed}</p>
       <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
       <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
       <p class="invoice-meta"><span class="meta-strong">Куда едет:</span> ${directions.size ? [...directions].join(", ") : "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">План выдачи:</span> ${invoice.estimated_release_date || "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">Тариф за 1 кг:</span> ${moneyTenge(invoice.tariff_price_per_kg || 0)} | <span class="meta-strong">Тариф за 1 м³:</span> ${moneyTenge(invoice.tariff_price_per_m3 || 0)}</p>
-      <p class="invoice-meta"><span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount || 0)}</p>
+      <p class="invoice-meta"><span class="meta-strong">Сумма вес:</span> ${moneyTenge(invoice.total_weight_sum || 0)} | <span class="meta-strong">Сумма объем:</span> ${moneyTenge(invoice.total_volume_sum || 0)} | <span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount || 0)}</p>
     `;
 
     itemsBody.innerHTML = "";
-
     let totalQty = 0;
     let totalWeight = 0;
     let totalVolume = 0;
+    let totalWeightSum = 0;
+    let totalVolumeSum = 0;
     let totalMoney = 0;
-
     if (!items.length) {
-      itemsBody.innerHTML = "<tr><td colspan='9'>В накладной нет позиций</td></tr>";
+      itemsBody.innerHTML = "<tr><td colspan='11'>В накладной нет позиций</td></tr>";
     } else {
       items.forEach((item) => {
+        const qty = Number(item.quantity || 0);
+        const lineWeight = Number(item.weight_kg || 0) * qty;
+        const lineVolume = Number(item.volume_m3 || 0) * qty;
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${item.line_no}</td>
           <td>${item.name}</td>
           <td>${item.unit}</td>
           <td>${item.quantity}</td>
-          <td>${item.weight_kg}</td>
-          <td>${item.volume_m3}</td>
+          <td>${number2(lineWeight)}</td>
+          <td>${number2(lineVolume)}</td>
           <td>${item.measure === "weight" ? "Вес" : "Объем"}</td>
           <td>${moneyTenge(item.unit_price || 0)}</td>
+          <td>${moneyTenge(item.line_total_weight || 0)}</td>
+          <td>${moneyTenge(item.line_total_volume || 0)}</td>
           <td>${moneyTenge(item.line_total || 0)}</td>
         `;
         itemsBody.appendChild(tr);
-
-        totalQty += Number(item.quantity || 0);
-        totalWeight += Number(item.weight_kg || 0);
-        totalVolume += Number(item.volume_m3 || 0);
+        totalQty += qty;
+        totalWeight += lineWeight;
+        totalVolume += lineVolume;
+        totalWeightSum += Number(item.line_total_weight || 0);
+        totalVolumeSum += Number(item.line_total_volume || 0);
         totalMoney += Number(item.line_total || 0);
       });
     }
-
     document.getElementById("details-total-qty").textContent = String(totalQty);
     document.getElementById("details-total-weight").textContent = number2(totalWeight);
     document.getElementById("details-total-volume").textContent = number2(totalVolume);
+    document.getElementById("details-total-weight-sum").textContent = moneyTenge(totalWeightSum);
+    document.getElementById("details-total-volume-sum").textContent = moneyTenge(totalVolumeSum);
     document.getElementById("details-total-money").textContent = moneyTenge(totalMoney);
-
     empty.classList.add("hidden");
     content.classList.remove("hidden");
     selectArchiveSubtab("details");
@@ -674,7 +731,6 @@ async function loadNextNumbers() {
 async function loadItemTemplates() {
   const payload = await api("/api/item-templates");
   state.itemTemplates = payload.templates || [];
-  applyItemNameOptions();
 }
 
 async function loadUsers() {
@@ -691,25 +747,29 @@ function renderUsers() {
     body.innerHTML = "<tr><td colspan='3'>Пользователи не найдены</td></tr>";
     return;
   }
-
   state.users.forEach((user) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${user.login}</td>
       <td>${user.role === "admin" ? "Админ" : "Пользователь"}</td>
       <td>
-        <div class="action-row">
-          <select data-role-select="${user.user_id}">
-            <option value="user" ${user.role === "user" ? "selected" : ""}>Пользователь</option>
-            <option value="admin" ${user.role === "admin" ? "selected" : ""}>Админ</option>
-          </select>
-          <button type="button" class="btn btn-secondary" data-role-save="${user.user_id}">Сохранить</button>
+        <div class="stack-sm">
+          <div class="action-row">
+            <select data-role-select="${user.user_id}">
+              <option value="user" ${user.role === "user" ? "selected" : ""}>Пользователь</option>
+              <option value="admin" ${user.role === "admin" ? "selected" : ""}>Админ</option>
+            </select>
+            <button type="button" class="btn btn-secondary" data-role-save="${user.user_id}">Сохранить роль</button>
+          </div>
+          <div class="action-row">
+            <input type="password" placeholder="Новый пароль" data-pass-input="${user.user_id}">
+            <button type="button" class="btn btn-secondary" data-pass-save="${user.user_id}">Сбросить пароль</button>
+          </div>
         </div>
       </td>
     `;
     body.appendChild(tr);
   });
-
   body.querySelectorAll("[data-role-save]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const userId = btn.getAttribute("data-role-save");
@@ -721,6 +781,27 @@ function renderUsers() {
         });
         showToast("Роль обновлена");
         await loadUsers();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  });
+  body.querySelectorAll("[data-pass-save]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.getAttribute("data-pass-save");
+      const input = body.querySelector(`[data-pass-input='${userId}']`);
+      const password = input.value.trim();
+      if (password.length < 3) {
+        showToast("Пароль должен быть минимум 3 символа");
+        return;
+      }
+      try {
+        await api(`/api/admin/users/${userId}/password`, {
+          method: "PATCH",
+          body: JSON.stringify({ password }),
+        });
+        input.value = "";
+        showToast("Пароль сброшен");
       } catch (error) {
         showToast(error.message);
       }
@@ -750,7 +831,9 @@ function renderPartialItems() {
     cb.addEventListener("change", () => {
       qty.disabled = !cb.checked;
       if (!cb.checked) qty.value = 1;
+      updateWagonCapacityPreview();
     });
+    qty.addEventListener("input", updateWagonCapacityPreview);
     wrap.appendChild(row);
   });
 }
@@ -768,7 +851,9 @@ async function loadAssignmentItems() {
 }
 
 function togglePartialBox() {
-  document.getElementById("partial-box").classList.toggle("hidden", document.getElementById("fully-loaded").value === "yes");
+  const fully = document.getElementById("fully-loaded").value === "yes";
+  document.getElementById("partial-box").classList.toggle("hidden", fully);
+  updateWagonCapacityPreview();
 }
 
 function collectPartialMovedItems() {
@@ -781,13 +866,53 @@ function collectPartialMovedItems() {
   return selected;
 }
 
+function calculatePartialWeightVolume() {
+  const itemMap = Object.fromEntries(state.assignmentItems.map((x) => [x.item_id, x]));
+  const partialItems = collectPartialMovedItems();
+  let weight = 0;
+  let volume = 0;
+  partialItems.forEach((p) => {
+    const item = itemMap[p.item_id];
+    if (!item) return;
+    weight += Number(item.weight_kg || 0) * Number(p.moved_quantity || 0);
+    volume += Number(item.volume_m3 || 0) * Number(p.moved_quantity || 0);
+  });
+  return { weight, volume };
+}
+
+async function updateWagonCapacityPreview() {
+  const textBox = document.getElementById("wagon-capacity-text");
+  const wagonId = document.getElementById("assignment-wagon").value;
+  const invoiceId = document.getElementById("assignment-invoice").value;
+  if (!wagonId || !invoiceId) {
+    textBox.textContent = "Выберите накладную и вагон, чтобы увидеть доступное место.";
+    return;
+  }
+  try {
+    const data = await api(`/api/wagons/${wagonId}/capacity?invoice_id=${invoiceId}`);
+    const fullyLoaded = document.getElementById("fully-loaded").value === "yes";
+    let needWeight = Number(data.invoice_weight_kg || 0);
+    let needVolume = Number(data.invoice_volume_m3 || 0);
+    if (!fullyLoaded) {
+      const partial = calculatePartialWeightVolume();
+      needWeight = partial.weight;
+      needVolume = partial.volume;
+    }
+    const remainsW = Number(data.remaining_weight_kg || 0);
+    const remainsV = Number(data.remaining_volume_m3 || 0);
+    const fits = needWeight <= remainsW && needVolume <= remainsV;
+    textBox.textContent = `Лимит вагона: ${number2(data.max_weight_kg)} кг / ${number2(data.max_volume_m3)} м³. Занято: ${number2(data.used_weight_kg)} кг / ${number2(data.used_volume_m3)} м³. Свободно: ${number2(data.remaining_weight_kg)} кг / ${number2(data.remaining_volume_m3)} м³. К распределению сейчас: ${number2(needWeight)} кг / ${number2(needVolume)} м³. ${fits ? "Помещается." : "Не помещается полностью."}`;
+  } catch (error) {
+    textBox.textContent = "Не удалось рассчитать вместимость.";
+  }
+}
+
 async function startInvoiceEdit(invoiceId) {
   if (state.user?.role !== "admin") return;
   try {
     const payload = await api(`/api/invoices/${invoiceId}`);
     const invoice = payload.invoice;
     const items = payload.items || [];
-
     state.editingInvoiceId = invoiceId;
     document.getElementById("invoice-number").value = invoice.invoice_number || "";
     document.querySelector("[name='creation_date']").value = invoice.creation_date || "";
@@ -796,14 +921,13 @@ async function startInvoiceEdit(invoiceId) {
     document.querySelector("[name='shipper_phone']").value = invoice.shipper_phone || "+7";
     document.querySelector("[name='consignee_name']").value = invoice.consignee_name || "";
     document.querySelector("[name='consignee_phone']").value = invoice.consignee_phone || "+7";
-
     const wrap = document.getElementById("items-wrap");
     wrap.innerHTML = "";
     items.forEach((item) => addItemRow({ atTop: false, data: item }));
     if (!items.length) addItemRow({ atTop: true });
-
     setInvoiceFormMode();
     selectTab("create");
+    clearInvoiceDirty();
   } catch (error) {
     showToast(error.message);
   }
@@ -834,30 +958,30 @@ function initTabs() {
 function initInvoiceForm() {
   document.getElementById("add-item-btn").addEventListener("click", () => addItemRow({ atTop: true }));
   addItemRow({ atTop: true });
+  const invoiceForm = document.getElementById("invoice-form");
+  invoiceForm.addEventListener("input", markInvoiceDirty);
+  invoiceForm.addEventListener("change", markInvoiceDirty);
 
   document.getElementById("cancel-edit-btn").addEventListener("click", async () => {
     resetInvoiceFormToCreate();
     await loadNextNumbers();
   });
 
-  document.getElementById("invoice-form").addEventListener("submit", async (event) => {
+  invoiceForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (state.submittingInvoice) return;
     if (!event.target.reportValidity()) return;
-
     const submitBtn = event.target.querySelector("button[type='submit']");
     const originalText = submitBtn.textContent;
     state.submittingInvoice = true;
     submitBtn.disabled = true;
     submitBtn.textContent = state.editingInvoiceId ? "Сохраняем..." : "Создаем...";
-
     try {
       const payload = gatherInvoicePayload();
       if (!payload.items.length) {
         showToast("Добавьте хотя бы одну позицию");
         return;
       }
-
       if (state.editingInvoiceId) {
         await api(`/api/invoices/${state.editingInvoiceId}`, {
           method: "PUT",
@@ -865,14 +989,9 @@ function initInvoiceForm() {
         });
         showToast("Накладная обновлена");
       } else {
-        await api(
-          "/api/invoices",
-          { method: "POST", body: JSON.stringify(payload) },
-          { idempotencyKey: generateIdempotencyKey() },
-        );
+        await api("/api/invoices", { method: "POST", body: JSON.stringify(payload) }, { idempotencyKey: generateIdempotencyKey() });
         showToast("Накладная создана");
       }
-
       resetInvoiceFormToCreate();
       await Promise.all([loadInvoices(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
       selectTab("invoices");
@@ -931,8 +1050,11 @@ function initWagonForms() {
       showToast(error.message);
     }
   });
-
-  document.getElementById("assignment-invoice").addEventListener("change", loadAssignmentItems);
+  document.getElementById("assignment-invoice").addEventListener("change", async () => {
+    await loadAssignmentItems();
+    await updateWagonCapacityPreview();
+  });
+  document.getElementById("assignment-wagon").addEventListener("change", updateWagonCapacityPreview);
   document.getElementById("fully-loaded").addEventListener("change", togglePartialBox);
   togglePartialBox();
 
@@ -943,7 +1065,6 @@ function initWagonForms() {
     const estimatedReleaseDate = document.getElementById("estimated-release-date").value;
     const fullyLoaded = document.getElementById("fully-loaded").value === "yes";
     const partialItems = collectPartialMovedItems();
-
     if (!invoiceId || !wagonId || !estimatedReleaseDate) {
       showToast("Заполните накладную, вагон и дату выдачи");
       return;
@@ -952,7 +1073,6 @@ function initWagonForms() {
       showToast("Для частичной погрузки выберите хотя бы одну позицию");
       return;
     }
-
     try {
       const payload = await api("/api/wagon-assignments", {
         method: "POST",
@@ -972,6 +1092,7 @@ function initWagonForms() {
       showToast("Распределение выполнено");
       await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
       await loadAssignmentItems();
+      await updateWagonCapacityPreview();
     } catch (error) {
       showToast(error.message);
     }
@@ -982,7 +1103,6 @@ function initArchiveSection() {
   document.querySelectorAll(".archive-subtab").forEach((button) => {
     button.addEventListener("click", () => selectArchiveSubtab(button.dataset.archiveTab));
   });
-
   document.getElementById("archive-body").addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -1001,23 +1121,28 @@ function initArchiveFilters() {
     document.getElementById("archive-filter-form").reset();
     renderArchive();
   });
+  const toggleBtn = document.getElementById("toggle-archive-filters");
+  const wrap = document.getElementById("archive-filters-wrap");
+  toggleBtn.addEventListener("click", () => {
+    const hidden = wrap.classList.toggle("hidden");
+    toggleBtn.textContent = hidden ? "Показать фильтры" : "Скрыть фильтры";
+  });
 }
 
 function initInvoiceFilters() {
-  [
-    "inv-f-number",
-    "inv-f-shipper",
-    "inv-f-consignee",
-    "inv-f-created-from",
-    "inv-f-created-to",
-    "inv-f-has-tariff",
-  ].forEach((id) => {
+  ["inv-f-number", "inv-f-shipper", "inv-f-consignee", "inv-f-created-from", "inv-f-created-to", "inv-f-has-tariff"].forEach((id) => {
     document.getElementById(id).addEventListener("input", renderInvoices);
     document.getElementById(id).addEventListener("change", renderInvoices);
   });
   document.getElementById("clear-invoice-filters").addEventListener("click", () => {
     document.getElementById("invoices-filter-form").reset();
     renderInvoices();
+  });
+  const toggleBtn = document.getElementById("toggle-invoice-filters");
+  const wrap = document.getElementById("invoice-filters-wrap");
+  toggleBtn.addEventListener("click", () => {
+    const hidden = wrap.classList.toggle("hidden");
+    toggleBtn.textContent = hidden ? "Показать фильтры" : "Скрыть фильтры";
   });
 }
 
@@ -1052,9 +1177,7 @@ function applyRoleUi() {
   } else {
     navAdmin.classList.add("hidden");
     tabAdmin.classList.add("hidden");
-    if (tabAdmin.classList.contains("active")) {
-      selectTab("create");
-    }
+    if (tabAdmin.classList.contains("active")) selectTab("create");
   }
 }
 
@@ -1109,9 +1232,7 @@ function initLoginForm() {
 
 async function bootstrapData() {
   await Promise.all([loadInvoices(), loadWagons(), loadAllocations(), loadNextNumbers(), loadItemTemplates()]);
-  if (state.user?.role === "admin") {
-    await loadUsers();
-  }
+  if (state.user?.role === "admin") await loadUsers();
 }
 
 async function restoreSession() {
@@ -1144,7 +1265,9 @@ async function bootstrap() {
   initInvoiceFilters();
   initAdminSection();
   initLoginForm();
+
   document.getElementById("logout-btn").addEventListener("click", () => {
+    if (!window.confirm("Вы уверены, что хотите выйти?")) return;
     tokenClear();
     state.user = null;
     state.editingInvoiceId = "";
@@ -1154,21 +1277,26 @@ async function bootstrap() {
     state.assignmentItems = [];
     state.itemTemplates = [];
     state.users = [];
+    clearInvoiceDirty();
     setCurrentUserLabel();
     showAuthScreen();
   });
+
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.invoiceFormDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+
   setDefaultDates();
   setInvoiceFormMode();
-
   document.getElementById("refresh-invoices").addEventListener("click", async () => {
     await Promise.all([loadInvoices(), loadAllocations(), loadItemTemplates()]);
   });
 
   showAuthScreen();
   const restored = await restoreSession();
-  if (!restored) {
-    showAuthScreen();
-  }
+  if (!restored) showAuthScreen();
 }
 
 bootstrap().catch((error) => {

@@ -1,1 +1,1 @@
-item_id,invoice_id,line_no,name,unit,quantity,weight_kg,volume_m3,measure,unit_price,line_total,created_at,updated_at
+item_id,invoice_id,line_no,name,unit,quantity,weight_kg,volume_m3,measure,unit_price,line_total_weight,line_total_volume,line_total,created_at,updated_at

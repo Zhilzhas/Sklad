@@ -1,1 +1,1 @@
-allocation_id,invoice_id,item_id,wagon_id,allocation_measure,allocation_value,created_at,updated_at
+allocation_id,invoice_id,item_id,wagon_id,allocation_measure,allocation_value,allocation_weight_kg,allocation_volume_m3,created_at,updated_at

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 MeasureType = Literal["weight", "volume"]
 AllocationMeasureType = Literal["quantity", "weight", "volume"]
 UserRole = Literal["admin", "user"]
+InvoiceStatus = Literal["formed", "loading", "in_transit", "delivered", "unloaded"]
 KZ_PHONE_PATTERN = r"^\+7\d{10}$"
 
 
@@ -101,3 +102,11 @@ class UserCreate(BaseModel):
 
 class UserRoleUpdate(BaseModel):
     role: UserRole
+
+
+class UserPasswordReset(BaseModel):
+    password: str = Field(min_length=3, max_length=100)
+
+
+class InvoiceStatusUpdate(BaseModel):
+    status: InvoiceStatus

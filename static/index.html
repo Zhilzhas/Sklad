@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -77,7 +77,6 @@
               <h2 class="section-title">Позиции груза</h2>
               <button type="button" id="add-item-btn" class="btn btn-secondary">+ Добавить строку</button>
             </div>
-            <datalist id="item-name-options"></datalist>
             <div id="items-wrap" class="stack-md"></div>
           </article>
 
@@ -117,38 +116,41 @@
             <h2 class="section-title">Список накладных</h2>
             <button type="button" id="refresh-invoices" class="btn btn-secondary">Обновить список</button>
           </div>
-          <form id="invoices-filter-form" class="form-grid form-grid-filters">
-            <label class="form-field">
-              <span class="field-label">Номер накладной</span>
-              <input id="inv-f-number" placeholder="Поиск по номеру">
-            </label>
-            <label class="form-field">
-              <span class="field-label">Отправитель</span>
-              <input id="inv-f-shipper" placeholder="Поиск по отправителю">
-            </label>
-            <label class="form-field">
-              <span class="field-label">Получатель</span>
-              <input id="inv-f-consignee" placeholder="Поиск по получателю">
-            </label>
-            <label class="form-field">
-              <span class="field-label">С даты создания</span>
-              <input type="date" id="inv-f-created-from">
-            </label>
-            <label class="form-field">
-              <span class="field-label">По дату создания</span>
-              <input type="date" id="inv-f-created-to">
-            </label>
-            <label class="form-field">
-              <span class="field-label">Тариф</span>
-              <select id="inv-f-has-tariff">
-                <option value="">Все</option>
-                <option value="yes">Только с тарифом</option>
-                <option value="no">Только без тарифа</option>
-              </select>
-            </label>
-          </form>
-          <div class="action-row">
-            <button type="button" id="clear-invoice-filters" class="btn btn-secondary">Сбросить фильтры</button>
+          <button type="button" id="toggle-invoice-filters" class="btn btn-secondary">Показать фильтры</button>
+          <div id="invoice-filters-wrap" class="hidden stack-sm">
+            <form id="invoices-filter-form" class="form-grid form-grid-filters">
+              <label class="form-field">
+                <span class="field-label">Номер накладной</span>
+                <input id="inv-f-number" placeholder="Поиск по номеру">
+              </label>
+              <label class="form-field">
+                <span class="field-label">Отправитель</span>
+                <input id="inv-f-shipper" placeholder="Поиск по отправителю">
+              </label>
+              <label class="form-field">
+                <span class="field-label">Получатель</span>
+                <input id="inv-f-consignee" placeholder="Поиск по получателю">
+              </label>
+              <label class="form-field">
+                <span class="field-label">С даты создания</span>
+                <input type="date" id="inv-f-created-from">
+              </label>
+              <label class="form-field">
+                <span class="field-label">По дату создания</span>
+                <input type="date" id="inv-f-created-to">
+              </label>
+              <label class="form-field">
+                <span class="field-label">Тариф</span>
+                <select id="inv-f-has-tariff">
+                  <option value="">Все</option>
+                  <option value="yes">Только с тарифом</option>
+                  <option value="no">Только без тарифа</option>
+                </select>
+              </label>
+            </form>
+            <div class="action-row">
+              <button type="button" id="clear-invoice-filters" class="btn btn-secondary">Сбросить фильтры</button>
+            </div>
           </div>
           <div id="invoices-list" class="stack-md"></div>
         </article>
@@ -200,6 +202,11 @@
             </label>
           </div>
 
+          <div id="wagon-capacity-box" class="sub-card">
+            <h3 class="sub-card-title">Вместимость вагона</h3>
+            <p id="wagon-capacity-text" class="status-text">Выберите накладную и вагон, чтобы увидеть доступное место.</p>
+          </div>
+
           <div id="partial-box" class="sub-card hidden">
             <h3 class="sub-card-title">Какие позиции ушли в этот вагон</h3>
             <p class="section-hint">Отметьте позиции и укажите количество, которое распределено.</p>
@@ -223,38 +230,41 @@
         <div id="archive-subtab-current" class="archive-subpanel active stack-lg">
           <article class="section-card card">
             <h2 class="section-title">Фильтры архива</h2>
-            <form id="archive-filter-form" class="form-grid form-grid-filters">
-              <label class="form-field">
-                <span class="field-label">Номер накладной</span>
-                <input id="f-invoice-number" placeholder="Поиск по номеру">
-              </label>
-              <label class="form-field">
-                <span class="field-label">Отправитель</span>
-                <input id="f-shipper" placeholder="Поиск по отправителю">
-              </label>
-              <label class="form-field">
-                <span class="field-label">Получатель</span>
-                <input id="f-consignee" placeholder="Поиск по получателю">
-              </label>
-              <label class="form-field">
-                <span class="field-label">С даты создания</span>
-                <input type="date" id="f-created-from">
-              </label>
-              <label class="form-field">
-                <span class="field-label">По дату создания</span>
-                <input type="date" id="f-created-to">
-              </label>
-              <label class="form-field">
-                <span class="field-label">Только с тарифом</span>
-                <select id="f-has-tariff">
-                  <option value="">Все</option>
-                  <option value="yes">Да</option>
-                  <option value="no">Нет</option>
-                </select>
-              </label>
-            </form>
-            <div class="action-row">
-              <button type="button" id="clear-archive-filters" class="btn btn-secondary">Сбросить фильтры</button>
+            <button type="button" id="toggle-archive-filters" class="btn btn-secondary">Показать фильтры</button>
+            <div id="archive-filters-wrap" class="hidden stack-sm">
+              <form id="archive-filter-form" class="form-grid form-grid-filters">
+                <label class="form-field">
+                  <span class="field-label">Номер накладной</span>
+                  <input id="f-invoice-number" placeholder="Поиск по номеру">
+                </label>
+                <label class="form-field">
+                  <span class="field-label">Отправитель</span>
+                  <input id="f-shipper" placeholder="Поиск по отправителю">
+                </label>
+                <label class="form-field">
+                  <span class="field-label">Получатель</span>
+                  <input id="f-consignee" placeholder="Поиск по получателю">
+                </label>
+                <label class="form-field">
+                  <span class="field-label">С даты создания</span>
+                  <input type="date" id="f-created-from">
+                </label>
+                <label class="form-field">
+                  <span class="field-label">По дату создания</span>
+                  <input type="date" id="f-created-to">
+                </label>
+                <label class="form-field">
+                  <span class="field-label">Только с тарифом</span>
+                  <select id="f-has-tariff">
+                    <option value="">Все</option>
+                    <option value="yes">Да</option>
+                    <option value="no">Нет</option>
+                  </select>
+                </label>
+              </form>
+              <div class="action-row">
+                <button type="button" id="clear-archive-filters" class="btn btn-secondary">Сбросить фильтры</button>
+              </div>
             </div>
           </article>
 
@@ -268,12 +278,15 @@
                     <th>Создана</th>
                     <th>Дата накладной</th>
                     <th>Выдача (план)</th>
+                    <th>Статус</th>
                     <th>Отправитель</th>
                     <th>Получатель</th>
                     <th>Строк</th>
                     <th>Кол-во</th>
                     <th>Вес, кг</th>
                     <th>Объем, м³</th>
+                    <th>Сумма вес, ₸</th>
+                    <th>Сумма объем, ₸</th>
                     <th>Итог, ₸</th>
                     <th>Тариф</th>
                   </tr>
@@ -282,11 +295,13 @@
                 <tfoot>
                   <tr id="archive-totals-row">
                     <th>ИТОГО</th>
-                    <th colspan="5">-</th>
+                    <th colspan="6">-</th>
                     <th id="archive-total-lines">0</th>
                     <th id="archive-total-qty">0</th>
                     <th id="archive-total-weight">0.00</th>
                     <th id="archive-total-volume">0.00</th>
+                    <th id="archive-total-weight-sum">0.00 ₸</th>
+                    <th id="archive-total-volume-sum">0.00 ₸</th>
                     <th id="archive-total-money">0.00 ₸</th>
                     <th>-</th>
                   </tr>
@@ -343,6 +358,8 @@
                       <th>Объем, м³</th>
                       <th>Мера</th>
                       <th>Тариф, ₸</th>
+                      <th>Сумма вес, ₸</th>
+                      <th>Сумма объем, ₸</th>
                       <th>Сумма, ₸</th>
                     </tr>
                   </thead>
@@ -355,6 +372,8 @@
                       <th id="details-total-volume">0.00</th>
                       <th>-</th>
                       <th>-</th>
+                      <th id="details-total-weight-sum">0.00 ₸</th>
+                      <th id="details-total-volume-sum">0.00 ₸</th>
                       <th id="details-total-money">0.00 ₸</th>
                     </tr>
                   </tfoot>
@@ -398,7 +417,7 @@
                 <tr>
                   <th>Логин</th>
                   <th>Текущая роль</th>
-                  <th>Изменить роль</th>
+                  <th>Управление</th>
                 </tr>
               </thead>
               <tbody id="admin-users-body"></tbody>
