@@ -184,7 +184,7 @@ def _invoice_or_404(invoice_id: str) -> dict[str, str]:
 
 def _items_by_invoice(invoice_id: str) -> list[dict[str, str]]:
     items = [row for row in store.list_rows("invoice_items") if row["invoice_id"] == invoice_id]
-    items.sort(key=lambda row: int(row["line_no"]))
+    items.sort(key=lambda row: _to_int(row.get("line_no")))
     return items
 
 
@@ -341,13 +341,14 @@ def _replace_invoice_items(invoice_id: str, rows_for_invoice: list[dict[str, str
 
 def _invoice_payload(invoice_id: str) -> dict:
     invoice = _invoice_or_404(invoice_id)
-    items = _items_by_invoice(invoice_id)
+    items = _items_with_live_totals(invoice, _items_by_invoice(invoice_id))
     allocations = [row for row in store.list_rows("wagon_allocations") if row["invoice_id"] == invoice_id]
     metrics = _invoice_metrics(items)
     return {
         "invoice": {
             **invoice,
             **metrics,
+            "total_amount": metrics["total_sum"],
             "status": invoice.get("status") or "formed",
             "has_tariff": _has_tariff(invoice),
             "has_pdf": invoice.get("pdf_file", "") != "",
@@ -367,7 +368,7 @@ def _regenerate_pdf(invoice_id: str) -> str:
         )
         return ""
 
-    items = _items_by_invoice(invoice_id)
+    items = _items_with_live_totals(invoice, _items_by_invoice(invoice_id))
     pdf_path = PDF_DIR / f"invoice_{invoice['invoice_number']}_{invoice['invoice_id']}.pdf"
     generate_invoice_pdf(pdf_path, invoice, items)
 
@@ -389,30 +390,16 @@ def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
     if not _has_tariff(invoice):
         return
 
-    price_per_kg = _to_float(invoice["tariff_price_per_kg"])
-    price_per_m3 = _to_float(invoice["tariff_price_per_m3"])
     items = _items_by_invoice(invoice_id)
 
     updated_items: dict[str, dict[str, str]] = {}
     total_amount = 0.0
     for item in items:
-        qty = _to_int(item.get("quantity"))
-        weight_sum = _to_float(item["weight_kg"]) * price_per_kg * qty
-        volume_sum = _to_float(item["volume_m3"]) * price_per_m3 * qty
-        if item["measure"] == "weight":
-            unit_price = price_per_kg
-            line_total = weight_sum
-            line_total_weight = weight_sum
-            line_total_volume = 0.0
-        else:
-            unit_price = price_per_m3
-            line_total = volume_sum
-            line_total_weight = 0.0
-            line_total_volume = volume_sum
+        unit_price, line_total_weight, line_total_volume, line_total = _line_totals_for_item(item, invoice)
         total_amount += line_total
         updated_items[item["item_id"]] = {
             **item,
-            "unit_price": _fmt2(unit_price),
+            "unit_price": unit_price,
             "line_total_weight": _fmt2(round(line_total_weight, 2)),
             "line_total_volume": _fmt2(round(line_total_volume, 2)),
             "line_total": _fmt2(round(line_total, 2)),
@@ -429,6 +416,58 @@ def _recalculate_invoice_with_tariff(invoice_id: str) -> None:
         updater=lambda row: {**row, "total_amount": _fmt2(round(total_amount, 2))},
     )
     _regenerate_pdf(invoice_id)
+
+
+def _line_totals_for_item(item: dict[str, str], invoice: dict[str, str]) -> tuple[str, float, float, float]:
+    if not _has_tariff(invoice):
+        return "", 0.0, 0.0, 0.0
+
+    qty = max(0, _to_int(item.get("quantity")))
+    price_per_kg = _to_float(invoice.get("tariff_price_per_kg"))
+    price_per_m3 = _to_float(invoice.get("tariff_price_per_m3"))
+    weight_sum = _to_float(item.get("weight_kg")) * price_per_kg * qty
+    volume_sum = _to_float(item.get("volume_m3")) * price_per_m3 * qty
+    measure = (item.get("measure") or "weight").strip()
+
+    if measure == "volume":
+        unit_price = price_per_m3
+        line_total_weight = 0.0
+        line_total_volume = volume_sum
+        line_total = volume_sum
+    else:
+        unit_price = price_per_kg
+        line_total_weight = weight_sum
+        line_total_volume = 0.0
+        line_total = weight_sum
+
+    return _fmt2(round(unit_price, 2)), round(line_total_weight, 2), round(line_total_volume, 2), round(line_total, 2)
+
+
+def _items_with_live_totals(invoice: dict[str, str], items: list[dict[str, str]]) -> list[dict[str, str]]:
+    computed: list[dict[str, str]] = []
+    for item in items:
+        unit_price, line_total_weight, line_total_volume, line_total = _line_totals_for_item(item, invoice)
+        if _has_tariff(invoice):
+            computed.append(
+                {
+                    **item,
+                    "unit_price": unit_price,
+                    "line_total_weight": _fmt2(line_total_weight),
+                    "line_total_volume": _fmt2(line_total_volume),
+                    "line_total": _fmt2(line_total),
+                }
+            )
+        else:
+            computed.append(
+                {
+                    **item,
+                    "unit_price": item.get("unit_price", ""),
+                    "line_total_weight": item.get("line_total_weight", ""),
+                    "line_total_volume": item.get("line_total_volume", ""),
+                    "line_total": item.get("line_total", ""),
+                }
+            )
+    return computed
 
 
 @app.get("/")
@@ -635,42 +674,27 @@ def list_invoices(authorization: str | None = Header(default=None)) -> dict[str,
     _dedupe_all()
     invoices = store.list_rows("invoices")
     items = store.list_rows("invoice_items")
-    metrics_by_invoice: dict[str, dict[str, float]] = {}
+    items_by_invoice: dict[str, list[dict[str, str]]] = {}
     for item in items:
-        invoice_id = item["invoice_id"]
-        if invoice_id not in metrics_by_invoice:
-            metrics_by_invoice[invoice_id] = {
-                "items_count": 0.0,
-                "quantity": 0.0,
-                "weight": 0.0,
-                "volume": 0.0,
-                "weight_sum": 0.0,
-                "volume_sum": 0.0,
-            }
-        qty = _to_int(item.get("quantity"))
-        metrics_by_invoice[invoice_id]["items_count"] += 1
-        metrics_by_invoice[invoice_id]["quantity"] += qty
-        metrics_by_invoice[invoice_id]["weight"] += _to_float(item.get("weight_kg")) * qty
-        metrics_by_invoice[invoice_id]["volume"] += _to_float(item.get("volume_m3")) * qty
-        metrics_by_invoice[invoice_id]["weight_sum"] += _to_float(item.get("line_total_weight"))
-        metrics_by_invoice[invoice_id]["volume_sum"] += _to_float(item.get("line_total_volume"))
+        items_by_invoice.setdefault(item["invoice_id"], []).append(item)
 
     invoices.sort(key=lambda row: row["created_at"], reverse=True)
     payload = []
     for row in invoices:
-        metrics = metrics_by_invoice.get(
-            row["invoice_id"],
-            {"items_count": 0.0, "quantity": 0.0, "weight": 0.0, "volume": 0.0, "weight_sum": 0.0, "volume_sum": 0.0},
-        )
+        invoice_items = items_by_invoice.get(row["invoice_id"], [])
+        invoice_items.sort(key=lambda x: _to_int(x.get("line_no")))
+        computed_items = _items_with_live_totals(row, invoice_items)
+        metrics = _invoice_metrics(computed_items)
         payload.append(
             {
                 **row,
-                "items_count": int(metrics["items_count"]),
-                "total_quantity": int(metrics["quantity"]),
-                "total_weight_kg": _fmt2(round(metrics["weight"], 2)),
-                "total_volume_m3": _fmt2(round(metrics["volume"], 2)),
-                "total_weight_sum": _fmt2(round(metrics["weight_sum"], 2)),
-                "total_volume_sum": _fmt2(round(metrics["volume_sum"], 2)),
+                "items_count": len(computed_items),
+                "total_quantity": int(metrics["total_quantity"]),
+                "total_weight_kg": metrics["total_weight_kg"],
+                "total_volume_m3": metrics["total_volume_m3"],
+                "total_weight_sum": metrics["total_weight_sum"],
+                "total_volume_sum": metrics["total_volume_sum"],
+                "total_amount": metrics["total_sum"],
                 "status": row.get("status") or "formed",
                 "has_tariff": _has_tariff(row),
                 "has_pdf": row.get("pdf_file", "") != "",
