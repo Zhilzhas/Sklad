@@ -580,6 +580,22 @@ def reset_user_password(
     return {"status": "password_reset"}
 
 
+@app.delete("/api/admin/users/{user_id}")
+def delete_user(user_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    admin = _require_admin(authorization)
+    users = store.list_rows("users")
+    target = next((x for x in users if x["user_id"] == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("login", "").strip().lower() == "admin":
+        raise HTTPException(status_code=400, detail="Default admin cannot be deleted")
+    if target["user_id"] == admin["user_id"]:
+        raise HTTPException(status_code=400, detail="You cannot delete yourself")
+
+    store.delete_rows("users", lambda row: row["user_id"] == user_id)
+    return {"status": "deleted"}
+
+
 @app.get("/api/next-numbers")
 def next_numbers(authorization: str | None = Header(default=None)) -> dict[str, str]:
     _current_user(authorization)

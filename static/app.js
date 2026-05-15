@@ -62,12 +62,14 @@ function setCurrentUserLabel() {
     label.textContent = "";
     label.classList.add("hidden");
     logoutBtn.classList.add("hidden");
+    syncExitProtection();
     return;
   }
   const roleText = state.user.role === "admin" ? "админ" : "пользователь";
   label.textContent = `${state.user.login} (${roleText})`;
   label.classList.remove("hidden");
   logoutBtn.classList.remove("hidden");
+  syncExitProtection();
 }
 
 async function api(path, options = {}, opts = {}) {
@@ -117,7 +119,7 @@ function clearInvoiceDirty() {
 function syncExitProtection() {
   const tg = window.Telegram?.WebApp;
   if (!tg) return;
-  const shouldProtect = !!state.invoiceFormDirty;
+  const shouldProtect = !!state.user;
   if (shouldProtect === telegramCloseGuardEnabled) return;
   if (shouldProtect && typeof tg.enableClosingConfirmation === "function") {
     tg.enableClosingConfirmation();
@@ -793,6 +795,7 @@ function renderUsers() {
           <div class="action-row">
             <input type="password" placeholder="Новый пароль" data-pass-input="${user.user_id}">
             <button type="button" class="btn btn-secondary" data-pass-save="${user.user_id}">Сбросить пароль</button>
+            <button type="button" class="btn btn-ghost" data-user-delete="${user.user_id}">Удалить</button>
           </div>
         </div>
       </td>
@@ -831,6 +834,21 @@ function renderUsers() {
         });
         input.value = "";
         showToast("Пароль сброшен");
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  });
+  body.querySelectorAll("[data-user-delete]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const userId = btn.getAttribute("data-user-delete");
+      const rowUser = state.users.find((x) => x.user_id === userId);
+      const login = rowUser?.login || "пользователя";
+      if (!window.confirm(`Удалить пользователя "${login}"?`)) return;
+      try {
+        await api(`/api/admin/users/${userId}`, { method: "DELETE" });
+        showToast("Пользователь удален");
+        await loadUsers();
       } catch (error) {
         showToast(error.message);
       }
