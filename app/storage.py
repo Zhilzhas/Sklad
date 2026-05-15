@@ -28,6 +28,7 @@ TABLE_SCHEMAS: dict[str, list[str]] = {
         "tariff_price_per_kg",
         "tariff_price_per_m3",
         "status",
+        "status_changed_at",
         "total_amount",
         "pdf_file",
         "created_at",

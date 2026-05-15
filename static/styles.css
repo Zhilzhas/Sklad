@@ -356,6 +356,10 @@ input[type="checkbox"] {
   padding: 12px;
 }
 
+.invoice-card-muted {
+  opacity: 0.55;
+}
+
 .invoice-title {
   margin: 0 0 8px;
   font-size: 18px;

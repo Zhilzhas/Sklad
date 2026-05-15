@@ -10,6 +10,14 @@ from reportlab.pdfgen import canvas
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+PDF_STATUS_LABELS = {
+    "formed": "Сформирована накладная",
+    "loading": "Загружается на отправку",
+    "in_transit": "В пути",
+    "delivered": "Доставлено",
+    "unloaded": "Выдано получателю",
+}
+
 
 def _fmt_money_tenge(value: float | str) -> str:
     try:
@@ -85,6 +93,11 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
     c.drawString(35, y, f"Грузополучатель: {_safe_text(invoice.get('consignee_name', ''), 85)}")
     y -= 15
     c.drawString(35, y, f"Телефон получателя: {_safe_text(invoice.get('consignee_phone', ''), 25)}")
+    y -= 15
+    status_key = (invoice.get("status") or "formed").strip()
+    c.drawString(35, y, f"Статус: {PDF_STATUS_LABELS.get(status_key, PDF_STATUS_LABELS['formed'])}")
+    y -= 15
+    c.drawString(35, y, f"Дата изменения статуса: {_safe_text(invoice.get('status_changed_at', ''), 30)}")
 
     y -= 22
     headers = [

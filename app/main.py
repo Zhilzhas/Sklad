@@ -356,6 +356,7 @@ def _invoice_payload(invoice_id: str) -> dict:
             **metrics,
             "total_amount": metrics["total_sum"],
             "status": invoice.get("status") or "formed",
+            "status_changed_at": invoice.get("status_changed_at") or invoice.get("updated_at", ""),
             "has_tariff": _has_tariff(invoice),
             "has_pdf": invoice.get("pdf_file", "") != "",
         },
@@ -643,6 +644,7 @@ def create_invoice(
             "tariff_price_per_kg": "",
             "tariff_price_per_m3": "",
             "status": "formed",
+            "status_changed_at": now_iso(),
             "total_amount": "0.00",
             "pdf_file": "",
         },
@@ -702,6 +704,7 @@ def list_invoices(authorization: str | None = Header(default=None)) -> dict[str,
                 "total_volume_sum": metrics["total_volume_sum"],
                 "total_amount": metrics["total_sum"],
                 "status": row.get("status") or "formed",
+                "status_changed_at": row.get("status_changed_at") or row.get("updated_at", ""),
                 "has_tariff": _has_tariff(row),
                 "has_pdf": row.get("pdf_file", "") != "",
             }
@@ -774,7 +777,7 @@ def update_invoice_status(
     store.update_rows(
         "invoices",
         predicate=lambda row: row["invoice_id"] == invoice_id,
-        updater=lambda row: {**row, "status": payload.status},
+        updater=lambda row: {**row, "status": payload.status, "status_changed_at": now_iso()},
     )
     return _invoice_payload(invoice_id)
 
@@ -802,6 +805,7 @@ def update_invoice(
             "tariff_price_per_kg": invoice.get("tariff_price_per_kg", ""),
             "tariff_price_per_m3": invoice.get("tariff_price_per_m3", ""),
             "status": invoice.get("status", "formed"),
+            "status_changed_at": invoice.get("status_changed_at", ""),
         },
     )
 
@@ -1078,6 +1082,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
             **row,
             "estimated_release_date": payload.estimated_release_date.isoformat(),
             "status": "loading",
+            "status_changed_at": now_iso(),
         },
     )
     _recalculate_invoice_with_tariff(payload.invoice_id)
@@ -1101,6 +1106,7 @@ def assign_invoice_to_wagon(payload: WagonAssignRequest, authorization: str | No
                 "tariff_price_per_kg": "",
                 "tariff_price_per_m3": "",
                 "status": "formed",
+                "status_changed_at": now_iso(),
                 "total_amount": "0.00",
                 "pdf_file": "",
             },

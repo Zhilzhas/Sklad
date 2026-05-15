@@ -18,7 +18,7 @@ const STATUS_LABELS = {
   loading: "Загружается на отправку",
   in_transit: "В пути",
   delivered: "Доставлено",
-  unloaded: "Выгружено",
+  unloaded: "Выдано получателю",
 };
 
 let telegramCloseGuardEnabled = false;
@@ -389,6 +389,7 @@ function selectArchiveSubtab(tabName) {
 function ShipmentCard(invoice) {
   const card = document.createElement("div");
   card.className = "invoice-card";
+  if (invoice.status === "unloaded") card.classList.add("invoice-card-muted");
   const tariffBadge = invoice.has_tariff
     ? `<span class="badge badge-accent">Тариф назначен</span>`
     : `<span class="badge badge-muted">Тариф не назначен</span>`;
@@ -405,6 +406,7 @@ function ShipmentCard(invoice) {
     <p class="invoice-meta"><span class="meta-strong">Создана:</span> ${invoice.creation_date || "-"} | <span class="meta-strong">Дата накладной:</span> ${invoice.issued_date || "-"}</p>
     <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
     <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
+    <p class="invoice-meta"><span class="meta-strong">Дата изменения статуса:</span> ${invoice.status_changed_at || "-"}</p>
     <p class="invoice-meta"><span class="meta-strong">Строк:</span> ${invoice.items_count} | <span class="meta-strong">Кол-во:</span> ${invoice.total_quantity} | <span class="meta-strong">Вес:</span> ${number2(invoice.total_weight_kg)} кг | <span class="meta-strong">Объем:</span> ${number2(invoice.total_volume_m3)} м³</p>
     <p class="invoice-meta"><span class="meta-strong">Сумма вес:</span> ${moneyTenge(invoice.total_weight_sum)} | <span class="meta-strong">Сумма объем:</span> ${moneyTenge(invoice.total_volume_sum)} | <span class="meta-strong">Итог:</span> ${moneyTenge(invoice.total_amount)}</p>
     <div class="badge-row">${tariffBadge}${statusBadge}</div>
@@ -415,7 +417,7 @@ function ShipmentCard(invoice) {
       <select data-action="status-select" class="status-select">
         <option value="in_transit" ${invoice.status === "in_transit" ? "selected" : ""}>В пути</option>
         <option value="delivered" ${invoice.status === "delivered" ? "selected" : ""}>Доставлено</option>
-        <option value="unloaded" ${invoice.status === "unloaded" ? "selected" : ""}>Выгружено</option>
+        <option value="unloaded" ${invoice.status === "unloaded" ? "selected" : ""}>Выдано получателю</option>
       </select>
       <button type="button" class="btn btn-secondary" data-action="status-save">Статус</button>
       ${adminActions}
@@ -466,6 +468,12 @@ function renderInvoices() {
   const container = document.getElementById("invoices-list");
   container.innerHTML = "";
   const filtered = applyInvoiceFilters(state.invoices);
+  filtered.sort((a, b) => {
+    const aDone = a.status === "unloaded" ? 1 : 0;
+    const bDone = b.status === "unloaded" ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+  });
   if (!filtered.length) {
     container.innerHTML = state.invoices.length
       ? "<p class='status-text'>По выбранным фильтрам ничего не найдено.</p>"
@@ -658,6 +666,7 @@ async function loadArchiveInvoiceDetails(invoiceId) {
     meta.innerHTML = `
       <p class="invoice-meta"><span class="meta-strong">Накладная:</span> № ${invoice.invoice_number}</p>
       <p class="invoice-meta"><span class="meta-strong">Статус:</span> ${STATUS_LABELS[invoice.status] || STATUS_LABELS.formed}</p>
+      <p class="invoice-meta"><span class="meta-strong">Дата изменения статуса:</span> ${invoice.status_changed_at || "-"}</p>
       <p class="invoice-meta"><span class="meta-strong">Отправитель:</span> ${invoice.shipper_name}</p>
       <p class="invoice-meta"><span class="meta-strong">Получатель:</span> ${invoice.consignee_name}</p>
       <p class="invoice-meta"><span class="meta-strong">Куда едет:</span> ${directions.size ? [...directions].join(", ") : "-"}</p>
