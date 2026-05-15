@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -87,29 +87,52 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
     c.drawString(35, y, f"Телефон получателя: {_safe_text(invoice.get('consignee_phone', ''), 25)}")
 
     y -= 22
-    c.setFont(font_bold, 9)
     headers = ["№", "Наименование", "Ед.", "Кол-во", "Вес, кг", "Объем, м³", "Мера", "Сумма, ₸"]
-    x_coords = [35, 60, 235, 280, 335, 392, 453, 512]
-    for idx, header in enumerate(headers):
-        c.drawString(x_coords[idx], y, header)
+    col_edges = [35, 60, 235, 280, 335, 392, 453, 512, width - 35]
+    header_height = 16
+    row_height = 16
 
-    c.line(35, y - 3, width - 35, y - 3)
-    y -= 16
+    def draw_table_header(top_y: float) -> float:
+        c.setFont(font_bold, 9)
+        for idx, header in enumerate(headers):
+            x0 = col_edges[idx]
+            x1 = col_edges[idx + 1]
+            c.rect(x0, top_y - header_height, x1 - x0, header_height, stroke=1, fill=0)
+            c.drawString(x0 + 2, top_y - header_height + 5, _safe_text(header, 24))
+        return top_y - header_height
+
+    y = draw_table_header(y)
     c.setFont(font_regular, 9)
+
     for item in items:
-        if y < 90:
+        if y - row_height < 90:
             c.showPage()
             y = height - 60
+            y = draw_table_header(y)
             c.setFont(font_regular, 9)
-        c.drawString(35, y, _safe_text(item["line_no"], 4))
-        c.drawString(60, y, _safe_text(item["name"], 30))
-        c.drawString(235, y, _safe_text(item["unit"], 10))
-        c.drawRightString(322, y, str(int(float(item["quantity"]))))
-        c.drawRightString(383, y, _fmt_number(item["weight_kg"]))
-        c.drawRightString(445, y, _fmt_number(item["volume_m3"]))
-        c.drawString(453, y, "Вес" if item["measure"] == "weight" else "Объем")
-        c.drawRightString(width - 38, y, _fmt_number(item.get("line_total", "0")))
-        y -= 14
+
+        row_values = [
+            _safe_text(item.get("line_no", ""), 4),
+            _safe_text(item.get("name", ""), 30),
+            _safe_text(item.get("unit", ""), 10),
+            str(int(float(item.get("quantity", "0") or 0))),
+            _fmt_number(item.get("weight_kg", "0")),
+            _fmt_number(item.get("volume_m3", "0")),
+            "Вес" if item.get("measure") == "weight" else "Объем",
+            _fmt_number(item.get("line_total", "0")),
+        ]
+        numeric_cols = {3, 4, 5, 7}
+
+        for idx, value in enumerate(row_values):
+            x0 = col_edges[idx]
+            x1 = col_edges[idx + 1]
+            c.rect(x0, y - row_height, x1 - x0, row_height, stroke=1, fill=0)
+            if idx in numeric_cols:
+                c.drawRightString(x1 - 2, y - row_height + 5, value)
+            else:
+                c.drawString(x0 + 2, y - row_height + 5, value)
+
+        y -= row_height
 
     y -= 8
     c.line(35, y, width - 35, y)
@@ -121,4 +144,3 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
     y -= 16
     c.drawString(35, y, f"Итог по накладной: {_fmt_money_tenge(invoice.get('total_amount', '0'))}")
     c.save()
-
