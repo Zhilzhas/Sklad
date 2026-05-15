@@ -220,11 +220,17 @@ def _next_wagon_code() -> str:
 
 def _dedupe_table_by_id(table_name: str, id_key: str) -> int:
     rows = store.list_rows(table_name)
+    if not rows:
+        return 0
+
+    # Safety guard: never rewrite a table when at least one row has missing primary id.
+    # This prevents accidental data loss for legacy/migrated records.
+    if any(not (row.get(id_key) or "").strip() for row in rows):
+        return 0
+
     latest_by_id: dict[str, dict[str, str]] = {}
     for row in rows:
         row_id = (row.get(id_key) or "").strip()
-        if not row_id:
-            continue
         existing = latest_by_id.get(row_id)
         if not existing or (row.get("updated_at", ""), row.get("created_at", "")) > (
             existing.get("updated_at", ""),
