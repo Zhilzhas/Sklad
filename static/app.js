@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   invoices: [],
   wagons: [],
   allocations: [],
@@ -13,13 +13,8 @@ const state = {
 
 const toast = document.getElementById("toast");
 
-const STATUS_LABELS = {
-  formed: "Сформирована накладная",
-  loading: "Загружается на отправку",
-  in_transit: "В пути",
-  delivered: "Доставлено",
-  unloaded: "Выгружено",
-};
+
+let telegramCloseGuardEnabled = false;
 
 function showToast(text) {
   if (!toast) return;
@@ -104,10 +99,28 @@ function normalizeKzPhone(rawValue) {
 
 function markInvoiceDirty() {
   state.invoiceFormDirty = true;
+  syncExitProtection();
 }
 
 function clearInvoiceDirty() {
   state.invoiceFormDirty = false;
+  syncExitProtection();
+}
+
+function syncExitProtection() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return;
+  const shouldProtect = !!state.invoiceFormDirty;
+  if (shouldProtect === telegramCloseGuardEnabled) return;
+  if (shouldProtect && typeof tg.enableClosingConfirmation === "function") {
+    tg.enableClosingConfirmation();
+    telegramCloseGuardEnabled = true;
+    return;
+  }
+  if (!shouldProtect && typeof tg.disableClosingConfirmation === "function") {
+    tg.disableClosingConfirmation();
+    telegramCloseGuardEnabled = false;
+  }
 }
 
 function initPhoneInputs() {
@@ -1185,6 +1198,7 @@ function initTelegramWebApp() {
   if (window.Telegram && window.Telegram.WebApp) {
     window.Telegram.WebApp.ready();
     window.Telegram.WebApp.expand();
+    syncExitProtection();
   }
 }
 
@@ -1303,3 +1317,6 @@ bootstrap().catch((error) => {
   console.error(error);
   showToast("Ошибка инициализации");
 });
+
+
+
