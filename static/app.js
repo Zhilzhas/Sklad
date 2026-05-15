@@ -13,6 +13,13 @@
 
 const toast = document.getElementById("toast");
 
+const STATUS_LABELS = {
+  formed: "Сформирована накладная",
+  loading: "Загружается на отправку",
+  in_transit: "В пути",
+  delivered: "Доставлено",
+  unloaded: "Выгружено",
+};
 
 let telegramCloseGuardEnabled = false;
 
