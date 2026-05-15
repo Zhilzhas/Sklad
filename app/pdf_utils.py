@@ -87,10 +87,22 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
     c.drawString(35, y, f"Телефон получателя: {_safe_text(invoice.get('consignee_phone', ''), 25)}")
 
     y -= 22
-    headers = ["№", "Наименование", "Ед.", "Кол-во", "Вес, кг", "Объем, м³", "Мера", "Сумма, ₸"]
-    col_edges = [35, 60, 235, 280, 335, 392, 453, 512, width - 35]
+    headers = [
+        "Строка",
+        "Наименование",
+        "Ед.",
+        "Кол-во",
+        "Вес, кг",
+        "Объем, м³",
+        "Мера",
+        "Тариф, ₸",
+        "Сумма вес, ₸",
+        "Сумма объем, ₸",
+        "Сумма, ₸",
+    ]
+    col_edges = [20, 44, 170, 198, 230, 272, 314, 358, 402, 458, 514, width - 20]
     header_height = 16
-    row_height = 16
+    row_height = 15
 
     def draw_table_header(top_y: float) -> float:
         c.setFont(font_bold, 9)
@@ -111,17 +123,23 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
             y = draw_table_header(y)
             c.setFont(font_regular, 9)
 
+        qty = int(float(item.get("quantity", "0") or 0))
+        line_weight = float(item.get("weight_kg", "0") or 0) * qty
+        line_volume = float(item.get("volume_m3", "0") or 0) * qty
         row_values = [
             _safe_text(item.get("line_no", ""), 4),
             _safe_text(item.get("name", ""), 30),
             _safe_text(item.get("unit", ""), 10),
-            str(int(float(item.get("quantity", "0") or 0))),
-            _fmt_number(item.get("weight_kg", "0")),
-            _fmt_number(item.get("volume_m3", "0")),
+            str(qty),
+            _fmt_number(line_weight),
+            _fmt_number(line_volume),
             "Вес" if item.get("measure") == "weight" else "Объем",
+            _fmt_number(item.get("unit_price", "0")),
+            _fmt_number(item.get("line_total_weight", "0")),
+            _fmt_number(item.get("line_total_volume", "0")),
             _fmt_number(item.get("line_total", "0")),
         ]
-        numeric_cols = {3, 4, 5, 7}
+        numeric_cols = {3, 4, 5, 7, 8, 9, 10}
 
         for idx, value in enumerate(row_values):
             x0 = col_edges[idx]
@@ -133,6 +151,44 @@ def generate_invoice_pdf(output_file: Path, invoice: dict[str, str], items: list
                 c.drawString(x0 + 2, y - row_height + 5, value)
 
         y -= row_height
+
+    total_qty = sum(int(float(item.get("quantity", "0") or 0)) for item in items)
+    total_weight = sum(float(item.get("weight_kg", "0") or 0) * int(float(item.get("quantity", "0") or 0)) for item in items)
+    total_volume = sum(float(item.get("volume_m3", "0") or 0) * int(float(item.get("quantity", "0") or 0)) for item in items)
+    total_weight_sum = sum(float(item.get("line_total_weight", "0") or 0) for item in items)
+    total_volume_sum = sum(float(item.get("line_total_volume", "0") or 0) for item in items)
+    total_money = sum(float(item.get("line_total", "0") or 0) for item in items)
+
+    if y - row_height < 90:
+        c.showPage()
+        y = height - 60
+        y = draw_table_header(y)
+        c.setFont(font_regular, 9)
+
+    c.setFont(font_bold, 9)
+    totals_row = [
+        "ИТОГО",
+        "",
+        "",
+        str(total_qty),
+        _fmt_number(total_weight),
+        _fmt_number(total_volume),
+        "-",
+        "-",
+        _fmt_number(total_weight_sum),
+        _fmt_number(total_volume_sum),
+        _fmt_number(total_money),
+    ]
+    numeric_cols = {3, 4, 5, 8, 9, 10}
+    for idx, value in enumerate(totals_row):
+        x0 = col_edges[idx]
+        x1 = col_edges[idx + 1]
+        c.rect(x0, y - row_height, x1 - x0, row_height, stroke=1, fill=0)
+        if idx in numeric_cols:
+            c.drawRightString(x1 - 2, y - row_height + 5, value)
+        else:
+            c.drawString(x0 + 2, y - row_height + 5, value)
+    y -= row_height
 
     y -= 8
     c.line(35, y, width - 35, y)
