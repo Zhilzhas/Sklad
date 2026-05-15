@@ -619,41 +619,57 @@ function renderArchiveWagonsTable() {
   const wagonsById = Object.fromEntries(state.wagons.map((x) => [x.wagon_id, x]));
   const grouped = new Map();
   state.allocations.forEach((alloc) => {
-    const key = `${alloc.wagon_id}::${alloc.invoice_id}`;
+    const key = alloc.wagon_id;
     if (!grouped.has(key)) {
+      const wagon = wagonsById[alloc.wagon_id] || null;
       grouped.set(key, {
-        wagon: wagonsById[alloc.wagon_id] || null,
-        invoice: invoicesById[alloc.invoice_id] || null,
-        allocatedTotal: 0,
+        wagon,
+        invoiceIds: new Set(),
+        weightMoney: 0,
+        volumeMoney: 0,
         entries: 0,
       });
     }
     const row = grouped.get(key);
-    row.allocatedTotal += Number(alloc.allocation_value || 0);
+    row.invoiceIds.add(alloc.invoice_id);
+    const invoice = invoicesById[alloc.invoice_id] || {};
+    const pricePerKg = Number(invoice.tariff_price_per_kg || 0);
+    const pricePerM3 = Number(invoice.tariff_price_per_m3 || 0);
+    const allocWeight = Number(alloc.allocation_weight_kg || 0);
+    const allocVolume = Number(alloc.allocation_volume_m3 || 0);
+    row.weightMoney += allocWeight * pricePerKg;
+    row.volumeMoney += allocVolume * pricePerM3;
     row.entries += 1;
   });
-  let totalAllocated = 0;
+  let totalWeightMoney = 0;
+  let totalVolumeMoney = 0;
+  let totalMoney = 0;
   let totalEntries = 0;
   if (!grouped.size) {
     body.innerHTML = "<tr><td colspan='7'>Пока нет распределений по вагонам</td></tr>";
   } else {
     [...grouped.values()].forEach((row) => {
+      const wagonTotal = row.weightMoney + row.volumeMoney;
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${row.wagon?.wagon_code || "-"}</td>
         <td>${row.wagon?.destination || "-"}</td>
-        <td>${row.invoice?.invoice_number || "-"}</td>
-        <td>${row.invoice?.shipper_name || "-"}</td>
-        <td>${row.invoice?.consignee_name || "-"}</td>
-        <td>${number2(row.allocatedTotal)}</td>
+        <td>${row.invoiceIds.size}</td>
+        <td>${moneyTenge(row.weightMoney)}</td>
+        <td>${moneyTenge(row.volumeMoney)}</td>
+        <td>${moneyTenge(wagonTotal)}</td>
         <td>${row.entries}</td>
       `;
       body.appendChild(tr);
-      totalAllocated += row.allocatedTotal;
+      totalWeightMoney += row.weightMoney;
+      totalVolumeMoney += row.volumeMoney;
+      totalMoney += wagonTotal;
       totalEntries += row.entries;
     });
   }
-  document.getElementById("archive-wagons-total-allocated").textContent = number2(totalAllocated);
+  document.getElementById("archive-wagons-total-weight-sum").textContent = moneyTenge(totalWeightMoney);
+  document.getElementById("archive-wagons-total-volume-sum").textContent = moneyTenge(totalVolumeMoney);
+  document.getElementById("archive-wagons-total-money-sum").textContent = moneyTenge(totalMoney);
   document.getElementById("archive-wagons-total-entries").textContent = String(totalEntries);
 }
 
