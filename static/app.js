@@ -392,6 +392,7 @@ function ShipmentCard(invoice) {
   const card = document.createElement("div");
   card.className = "invoice-card";
   if (invoice.status === "unloaded") card.classList.add("invoice-card-muted");
+  const canDeleteInvoice = !["in_transit", "delivered", "unloaded"].includes(invoice.status);
   const tariffBadge = invoice.has_tariff
     ? `<span class="badge badge-accent">Тариф назначен</span>`
     : `<span class="badge badge-muted">Тариф не назначен</span>`;
@@ -400,7 +401,11 @@ function ShipmentCard(invoice) {
   const adminActions =
     state.user?.role === "admin"
       ? `<button type="button" class="btn btn-secondary" data-action="edit">Редактировать</button>
-         <button type="button" class="btn btn-ghost" data-action="delete">Удалить</button>`
+         ${
+           canDeleteInvoice
+             ? `<button type="button" class="btn btn-ghost" data-action="delete">Удалить</button>`
+             : `<button type="button" class="btn btn-ghost" disabled title="Удаление доступно только до статуса 'В пути'">Удалить</button>`
+         }`
       : "";
 
   card.innerHTML = `
@@ -461,7 +466,9 @@ function ShipmentCard(invoice) {
 
   if (state.user?.role === "admin") {
     card.querySelector("[data-action='edit']").addEventListener("click", () => startInvoiceEdit(invoice.invoice_id));
-    card.querySelector("[data-action='delete']").addEventListener("click", () => deleteInvoice(invoice.invoice_id));
+    if (canDeleteInvoice) {
+      card.querySelector("[data-action='delete']").addEventListener("click", () => deleteInvoice(invoice.invoice_id));
+    }
   }
   return card;
 }

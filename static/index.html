@@ -32,7 +32,7 @@
         <button type="button" id="logout-btn" class="btn btn-secondary hidden">Выйти</button>
       </div>
       <h1 class="app-title">Прием и управление складом</h1>
-      <p class="app-subtitle">Накладные, тарифы (₸), вагоны и архив</p>
+      <p class="app-subtitle">Накладные, тарифы (₸), вагоны и база</p>
     </header>
 
     <main class="page-content">
@@ -222,14 +222,14 @@
 
       <section id="tab-archive" class="tab-panel stack-lg">
         <div class="archive-subtabs">
-          <button class="archive-subtab active" data-archive-tab="current">Текущий архив</button>
+          <button class="archive-subtab active" data-archive-tab="current">Текущая база</button>
           <button class="archive-subtab" data-archive-tab="wagons">Таблица по вагонам</button>
           <button class="archive-subtab" data-archive-tab="details">Подробно по накладной</button>
         </div>
 
         <div id="archive-subtab-current" class="archive-subpanel active stack-lg">
           <article class="section-card card">
-            <h2 class="section-title">Фильтры архива</h2>
+            <h2 class="section-title">Фильтры базы</h2>
             <button type="button" id="toggle-archive-filters" class="btn btn-secondary">Показать фильтры</button>
             <div id="archive-filters-wrap" class="hidden stack-sm">
               <form id="archive-filter-form" class="form-grid form-grid-filters">
@@ -269,7 +269,7 @@
           </article>
 
           <article class="section-card card">
-            <h2 class="section-title">Результаты архива</h2>
+            <h2 class="section-title">Результаты базы</h2>
             <div class="archive-table-wrap">
               <table class="archive-table">
                 <thead>
@@ -343,7 +343,7 @@
         <div id="archive-subtab-details" class="archive-subpanel">
           <article class="section-card card stack-md">
             <h2 class="section-title">Подробно по накладной</h2>
-            <p id="archive-details-empty" class="status-text">Выберите накладную в "Текущий архив", нажав на ее номер.</p>
+            <p id="archive-details-empty" class="status-text">Выберите накладную в "Текущая база", нажав на ее номер.</p>
             <div id="archive-details-content" class="hidden stack-md">
               <div id="archive-details-meta" class="sub-card"></div>
               <div class="archive-table-wrap">
@@ -431,7 +431,7 @@
       <button class="bottom-tab active" data-tab="create">Новая накладная</button>
       <button class="bottom-tab" data-tab="invoices">Накладные</button>
       <button class="bottom-tab" data-tab="wagons">Вагоны</button>
-      <button class="bottom-tab" data-tab="archive">Архив</button>
+      <button class="bottom-tab" data-tab="archive">База</button>
       <button id="nav-admin" class="bottom-tab hidden" data-tab="admin">Админ</button>
     </nav>
 

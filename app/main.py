@@ -852,6 +852,8 @@ def update_invoice(
 def delete_invoice(invoice_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
     _require_admin(authorization)
     invoice = _invoice_or_404(invoice_id)
+    if (invoice.get("status") or "formed") in {"in_transit", "delivered", "unloaded"}:
+        raise HTTPException(status_code=400, detail="Invoice cannot be deleted after status 'В пути'")
     store.delete_rows("wagon_allocations", lambda row: row["invoice_id"] == invoice_id)
     store.delete_rows("invoice_items", lambda row: row["invoice_id"] == invoice_id)
     deleted = store.delete_rows("invoices", lambda row: row["invoice_id"] == invoice_id)
